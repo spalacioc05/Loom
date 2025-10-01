@@ -1,0 +1,34 @@
+# Node
+node_modules/
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+
+# Environment
+.env
+.env.*
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# Build
+/dist/
+/build/
+
+# Misc
+coverage/
+
+# Optional: ignore SQLite or other local DBs
+*.sqlite
+*.db

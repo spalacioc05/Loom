@@ -9,9 +9,9 @@ class ApiService {
   /// Obtiene la lista de libros desde el backend.
   static Future<List<Book>> fetchBooks() async {
     final response = await http.get(Uri.parse(baseUrl));
-    print('Petición a: ' + baseUrl);
-    print('Status code: ' + response.statusCode.toString());
-    print('Body: ' + response.body);
+    print('Petición a: $baseUrl');
+    print('Status code: ${response.statusCode}');
+    print('Body: ${response.body}');
     if (response.statusCode == 200) {
       final List<dynamic> data = json.decode(response.body);
       return data.map((json) => Book.fromJson(json)).toList();

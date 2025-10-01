@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'screens/books_screen.dart';
 import 'screens/splash_screen.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
   runApp(const MyApp());
 }
 
@@ -31,11 +34,9 @@ class _MyAppState extends State<MyApp> {
         colorScheme: ColorScheme.dark(
           primary: const Color(0xFF00C853),
           secondary: const Color(0xFF2196F3),
-          background: const Color(0xFF2B2A26),
           surface: const Color(0xFF36352F),
           onPrimary: Colors.black,
           onSecondary: Colors.white,
-          onBackground: Colors.white,
           onSurface: Colors.white,
         ),
         scaffoldBackgroundColor: const Color(0xFF2B2A26),
@@ -66,7 +67,7 @@ class _MyAppState extends State<MyApp> {
       ),
       home: _showSplash
           ? SplashScreen(onContinue: _continueToApp)
-          : const BooksScreen(),
+          : const BooksScreen(initialTab: 1),
     );
   }
 }

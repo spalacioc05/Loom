@@ -12,7 +12,7 @@ class LoomBanner extends StatelessWidget {
       padding: const EdgeInsets.only(top: 18, left: 22, right: 22, bottom: 10),
       color:
           Theme.of(context).appBarTheme.backgroundColor ??
-          Theme.of(context).colorScheme.background,
+          Theme.of(context).colorScheme.surface,
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [

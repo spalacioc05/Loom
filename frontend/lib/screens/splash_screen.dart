@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-// import 'package:google_fonts/google_fonts.dart';
+import '../auth/google_auth_service.dart';
 
 class SplashScreen extends StatelessWidget {
   final VoidCallback onContinue;
@@ -8,7 +8,7 @@ class SplashScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.background,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       body: Stack(
         children: [
           // Imagen de fondo
@@ -65,7 +65,7 @@ class SplashScreen extends StatelessWidget {
                           textAlign: TextAlign.center,
                         ),
                         const SizedBox(height: 36),
-                        ElevatedButton.icon(
+                        ElevatedButton(
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.white,
                             foregroundColor: Colors.black87,
@@ -78,18 +78,28 @@ class SplashScreen extends StatelessWidget {
                               borderRadius: BorderRadius.circular(30),
                             ),
                           ),
-                          icon: Image.network(
-                            'https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg',
-                            height: 22,
-                          ),
-                          label: const Text(
+                          child: const Text(
                             'Iniciar con Google',
                             style: TextStyle(
                               fontWeight: FontWeight.w600,
                               fontSize: 17,
                             ),
                           ),
-                          onPressed: onContinue,
+                          onPressed: () async {
+                            final auth = GoogleAuthService();
+                            try {
+                              final user = await auth.signInWithGoogle();
+                              if (user != null) {
+                                onContinue();
+                              }
+                            } catch (e) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Error al iniciar sesión: $e'),
+                                ),
+                              );
+                            }
+                          },
                         ),
                         const SizedBox(height: 36),
                       ],

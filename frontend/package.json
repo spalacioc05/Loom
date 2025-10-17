@@ -1,0 +1,35 @@
+{
+  "name": "frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --turbopack -p 3001",
+    "build": "next build --turbopack",
+    "start": "next start -p 3001"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.75.0",
+    "@tanstack/react-query": "^5.90.5",
+    "autoprefixer": "^10.4.21",
+    "axios": "^1.12.2",
+    "dayjs": "^1.11.18",
+    "framer-motion": "^12.23.24",
+    "howler": "^2.2.4",
+    "intersection-observer": "^0.12.2",
+    "lucide-react": "^0.546.0",
+    "next": "15.5.6",
+    "pdfjs-dist": "^5.4.296",
+  "postcss": "^8.5.6",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-howler": "^5.2.0",
+    "react-icons": "^5.5.0",
+    "react-pdf": "^10.2.0",
+    "react-toastify": "^11.0.5",
+    "react-use-measure": "^2.1.7",
+    "swr": "^2.3.6"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.14"
+  }
+}

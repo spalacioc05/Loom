@@ -21,7 +21,9 @@ class _MyAppState extends State<MyApp> {
   bool _showSplash = true;
 
   void _continueToApp() {
-    setState(() => _showSplash = false);
+    if (mounted) {
+      setState(() => _showSplash = false);
+    }
   }
 
   @override

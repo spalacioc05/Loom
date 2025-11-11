@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import '../models/book.dart';
 import '../widgets/search_bar_widget.dart';
 import '../widgets/category_carousel.dart';
-import '../widgets/book_grid_card.dart';
 import '../services/api_service.dart';
 import '../widgets/loom_banner.dart';
+import '../widgets/search_book_card.dart';
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -30,6 +30,40 @@ class _SearchScreenState extends State<SearchScreen> {
   void initState() {
     super.initState();
     _booksFuture = ApiService.fetchBooks();
+  }
+
+  Future<void> _showBookInfoDialog(Book book) async {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text(book.titulo),
+          content: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (book.autores.isNotEmpty) ...[
+                  const Text('Autor:', style: TextStyle(fontWeight: FontWeight.bold)),
+                  Text(book.autores.map((a) => a.nombre).join(', ')),
+                  const SizedBox(height: 8),
+                ],
+                if (book.descripcion != null && book.descripcion!.isNotEmpty) ...[
+                  const Text('Descripción:', style: TextStyle(fontWeight: FontWeight.bold)),
+                  Text(book.descripcion!),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cerrar'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override
@@ -58,8 +92,14 @@ class _SearchScreenState extends State<SearchScreen> {
                   builder: (context, snapshot) {
                     if (snapshot.connectionState == ConnectionState.waiting) {
                       return const Center(child: CircularProgressIndicator());
-                    } else if (snapshot.hasError) {
-                      return Center(child: Text('Error: [${snapshot.error}'));
+                      } else if (snapshot.hasError) {
+                        return Center(
+                          child: Text(
+                            'Error al cargar libros: ${snapshot.error}',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(color: Colors.redAccent),
+                          ),
+                        );
                     } else if (snapshot.hasData) {
                       final books = snapshot.data!;
                       return GridView.builder(
@@ -76,7 +116,10 @@ class _SearchScreenState extends State<SearchScreen> {
                             ),
                         itemCount: books.length,
                         itemBuilder: (context, index) {
-                          return BookGridCard(book: books[index]);
+                          return SearchBookCard(
+                            book: books[index],
+                            onTap: () => _showBookInfoDialog(books[index]),
+                          );
                         },
                       );
                     } else {

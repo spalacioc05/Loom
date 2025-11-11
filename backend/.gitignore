@@ -1,16 +1,63 @@
-# Node
-node_modules/
-npm-debug.log
-yarn-debug.log
-yarn-error.log
+# ===================================
+# BACKEND GITIGNORE
+# ===================================
 
-# Environment
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+package-lock.json
+
+# Environment variables (IMPORTANTE: NO SUBIR SECRETS)
 .env
 .env.*
+!.env.example
+*.local
+
+# Azure y credenciales
+*.key
+*.pem
+*.p12
+*.pfx
+*.cer
+*.secret
+*.credentials
+azure.json
+
+# Supabase
+.supabase/
 
 # Logs
 logs/
 *.log
+combined.log
+error.log
+
+# Build y distribución
+/dist/
+/build/
+/out/
+
+# Coverage y testing
+coverage/
+.nyc_output/
+*.lcov
+
+# Bases de datos locales
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+
+# Archivos temporales
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
 
 # OS
 .DS_Store
@@ -22,13 +69,20 @@ Thumbs.db
 *.sublime-workspace
 *.sublime-project
 
-# Build
-/dist/
-/build/
+# Docker
+docker-compose.override.yml
 
-# Misc
-coverage/
+# Archivos de prueba generados
+test_audio.mp3
+test_*.mp3
+*.test.mp3
+test_*.pdf
+test_output/
 
-# Optional: ignore SQLite or other local DBs
-*.sqlite
-*.db
+# Scripts personales de testing
+test_local_*.js
+test_local_*.cjs
+
+# PM2
+.pm2/
+pm2.log

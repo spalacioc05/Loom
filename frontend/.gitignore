@@ -1,3 +1,7 @@
+# ===================================
+# FRONTEND FLUTTER GITIGNORE
+# ===================================
+
 # Miscellaneous
 *.class
 *.log
@@ -18,15 +22,14 @@ migrate_working_dir/
 *.iws
 .idea/
 
-# The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
-#.vscode/
+# VS Code
+.vscode/
 
 # Flutter/Dart/Pub related
 **/doc/api/
 **/ios/Flutter/.last_build_id
 .dart_tool/
+.flutter-plugins
 .flutter-plugins-dependencies
 .pub-cache/
 .pub/
@@ -43,3 +46,44 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Android signing keys
+*.jks
+*.keystore
+key.properties
+
+# Firebase y Google Services (SENSIBLE - NO SUBIR)
+google-services.json
+GoogleService-Info.plist
+firebase_app_id_file.json
+
+# iOS signing
+*.mobileprovision
+*.p12
+*.cer
+
+# Firebase config (si contiene info sensible)
+# Descomenta si tu configuración tiene secrets
+# firebase_options.dart
+
+# Environment config
+.env
+.env.*
+!.env.example
+
+# Generated files
+*.g.dart
+*.freezed.dart
+*.gen.dart
+*.pb.dart
+*.pbenum.dart
+*.pbgrpc.dart
+*.pbjson.dart
+
+# Local configuration
+*.local
+
+# Database
+*.db
+*.sqlite
+*.sqlite3

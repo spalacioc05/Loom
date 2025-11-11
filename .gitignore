@@ -1,0 +1,82 @@
+# ===================================
+# ROOT GITIGNORE - Servicio/Loom
+# ===================================
+
+# Environment variables y configuración sensible
+.env
+.env.*
+!.env.example
+*.local
+
+# Secrets y credenciales
+*.key
+*.pem
+*.p12
+*.secret
+*.credentials
+config.local.*
+
+# Bases de datos locales
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Sistema operativo
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# Editores e IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# Archivos temporales y caché
+*.tmp
+*.temp
+*.cache
+.cache/
+
+# Archivos de backup
+*.bak
+*.backup
+*~
+
+# Coverage reports
+coverage/
+*.lcov
+.nyc_output/
+
+# Docker
+docker-compose.override.yml
+.dockerignore
+
+# Archivos de prueba generados
+test_audio.mp3
+test_*.mp3
+*.test.mp3
+
+# OneDrive (evitar conflictos)
+~$*

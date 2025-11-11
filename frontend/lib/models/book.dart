@@ -2,36 +2,80 @@
 class Book {
   final String id;
   final String titulo;
-  final String descripcion;
-  final DateTime fechaPublicacion;
+  final String? descripcion;
+  final DateTime? fechaPublicacion;
   final String? portada;
-  final String archivoUrl;
+  final String? archivo;
+  final int? paginas;
+  final int? palabras;
+  final List<Author> autores;
+  final List<Genre> generos;
 
   Book({
     required this.id,
     required this.titulo,
-    required this.descripcion,
-    required this.fechaPublicacion,
+    this.descripcion,
+    this.fechaPublicacion,
     this.portada,
-    required this.archivoUrl,
+    this.archivo,
+    this.paginas,
+    this.palabras,
+    this.autores = const [],
+    this.generos = const [],
   });
+
+  /// Obtiene el id como entero
+  int get intId => int.parse(id);
 
   /// Crea una instancia de Book desde un JSON.
   factory Book.fromJson(Map<String, dynamic> json) {
-    // Decodifica el campo archivo (Buffer) a String URL
-    String archivoUrl = '';
-    if (json['archivo'] != null && json['archivo']['data'] != null) {
-      archivoUrl = String.fromCharCodes(
-        List<int>.from(json['archivo']['data']),
-      );
-    }
     return Book(
-      id: json['id'].toString(),
-      titulo: json['titulo'],
+      id: (json['id'] ?? 0).toString(),
+      titulo: json['titulo'] ?? 'Sin título',
       descripcion: json['descripcion'],
-      fechaPublicacion: DateTime.parse(json['fecha_publicacion']),
+      fechaPublicacion: json['fecha_publicacion'] != null 
+        ? DateTime.parse(json['fecha_publicacion']) 
+        : null,
       portada: json['portada'],
-      archivoUrl: archivoUrl,
+      archivo: json['archivo'],
+      paginas: json['paginas'],
+      palabras: json['palabras'],
+      autores: json['autores'] != null 
+        ? (json['autores'] as List).map((a) => Author.fromJson(a)).toList()
+        : [],
+      generos: json['generos'] != null
+        ? (json['generos'] as List).map((g) => Genre.fromJson(g)).toList()
+        : [],
+    );
+  }
+}
+
+/// Modelo de autor
+class Author {
+  final String id;
+  final String nombre;
+
+  Author({required this.id, required this.nombre});
+
+  factory Author.fromJson(Map<String, dynamic> json) {
+    return Author(
+      id: (json['id'] ?? 0).toString(),
+      nombre: json['nombre'] ?? 'Desconocido',
+    );
+  }
+}
+
+/// Modelo de género
+class Genre {
+  final String id;
+  final String nombre;
+
+  Genre({required this.id, required this.nombre});
+
+  factory Genre.fromJson(Map<String, dynamic> json) {
+    return Genre(
+      id: (json['id'] ?? 0).toString(),
+      nombre: json['nombre'] ?? 'Sin género',
     );
   }
 }

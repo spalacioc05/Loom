@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../auth/google_auth_service.dart';
 
 class SplashScreen extends StatelessWidget {
@@ -11,18 +11,15 @@ class SplashScreen extends StatelessWidget {
       backgroundColor: Theme.of(context).colorScheme.surface,
       body: Stack(
         children: [
-          // Imagen de fondo
           Positioned.fill(
             child: Image.network(
               'https://images.unsplash.com/photo-1464983953574-0892a716854b?auto=format&fit=crop&w=800&q=80',
               fit: BoxFit.cover,
             ),
           ),
-          // Panel oscuro semitransparente
           Positioned.fill(
             child: Container(color: Colors.black.withOpacity(0.65)),
           ),
-          // Contenido alineado abajo
           Positioned.fill(
             child: SafeArea(
               child: Column(
@@ -78,6 +75,26 @@ class SplashScreen extends StatelessWidget {
                               borderRadius: BorderRadius.circular(30),
                             ),
                           ),
+                          onPressed: () async {
+                            final auth = GoogleAuthService();
+                            try {
+                              print('🔵 Iniciando login...');
+                              final user = await auth.signInWithGoogle();
+                              print('🔵 Login completado: $user');
+                              if (user != null && context.mounted) {
+                                print('🔵 Navegando a home...');
+                                onContinue();
+                              } else {
+                                print('❌ Usuario null o context no montado');
+                              }
+                            } catch (e) {
+                              print('❌ Error en splash: $e');
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Error: $e')),
+                              );
+                            }
+                          },
                           child: const Text(
                             'Iniciar con Google',
                             style: TextStyle(
@@ -85,21 +102,6 @@ class SplashScreen extends StatelessWidget {
                               fontSize: 17,
                             ),
                           ),
-                          onPressed: () async {
-                            final auth = GoogleAuthService();
-                            try {
-                              final user = await auth.signInWithGoogle();
-                              if (user != null) {
-                                onContinue();
-                              }
-                            } catch (e) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text('Error al iniciar sesión: $e'),
-                                ),
-                              );
-                            }
-                          },
                         ),
                         const SizedBox(height: 36),
                       ],

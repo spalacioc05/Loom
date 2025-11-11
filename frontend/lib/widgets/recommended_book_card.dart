@@ -28,7 +28,7 @@ class RecommendedBookCard extends StatelessWidget {
               Text(book.titulo, style: Theme.of(context).textTheme.titleLarge),
               const SizedBox(height: 8),
               Text(
-                book.descripcion,
+                book.descripcion ?? 'Sin descripción',
                 maxLines: 3,
                 overflow: TextOverflow.ellipsis,
               ),

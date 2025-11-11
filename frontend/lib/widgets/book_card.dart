@@ -16,7 +16,7 @@ class BookCard extends StatelessWidget {
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         subtitle: Text(
-          book.descripcion,
+          book.descripcion ?? 'Sin descripción',
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
         ),

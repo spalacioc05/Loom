@@ -198,64 +198,97 @@ Basado en el SQL proporcionado (documental; no ejecutar). Relaciones y tablas pr
 
 ```mermaid
 erDiagram
-  %% Entidades
-  tbl_usuarios {
-    bigint id_usuario PK
-    text id_supabase UNIQUE
-    text nombre UNIQUE
-    text correo UNIQUE
+  usuarios ||--o{ libros : "sube"
+  usuarios ||--o{ progreso : "tiene"
+  libros ||--o{ documentos : "procesa"
+  documentos ||--o{ segmentos : "segmenta"
+  segmentos ||--o{ audios : "cache_audio"
+  voces ||--o{ audios : "voz_audio"
+  voces ||--o{ progreso : "voz_progreso"
+  usuarios ||--o{ biblioteca : "agrega"
+  libros ||--o{ biblioteca : "en_biblioteca"
+
+  usuarios {
+    bigint id_usuario
+    text nombre
+    text correo
     timestamp fecha_registro
-    text foto_perfil
-    bigint id_estado FK
-    timestamp ultimo_login
-    text firebase_uid
   }
 
-  tbl_estados {
-    bigint id_estado PK
-    text nombre
-  }
-
-  tbl_paises {
-    bigint id_pais PK
-    text nombre
-  }
-
-  tbl_autores {
-    bigint id_autor PK
-    text nombre
+  libros {
+    bigint id_libro
+    text titulo
     text descripcion
-    text foto
-    date fecha_nacimiento
-    date fecha_muerte
-    bigint id_pais FK
+    date fecha_publicacion
+    int paginas
+    int palabras
   }
 
-  tbl_categorias {
-    int id_categoria PK
-    varchar nombre UNIQUE
-    text descripcion
-    timestamp created_at
+  documentos {
+    uuid id
+    bigint libro_id
+    text estado
+    int total_segmentos
   }
 
-  tbl_generos {
-    bigint id_genero PK
-    text nombre
+  segmentos {
+    uuid id
+    uuid documento_id
+    int orden
+    int char_inicio
+    int char_fin
+    text texto
   }
 
-  tbl_idiomas {
-    bigint id_idioma PK
-    varchar codigo
-    varchar nombre
+  audios {
+    uuid id
+    uuid documento_id
+    uuid segmento_id
+    uuid voz_id
+    text audio_url
   }
 
-  tbl_playbackrate {
-    bigint id_playbackrate PK
-    float velocidad
+  voces {
+    uuid id
+    text proveedor
+    text codigo_voz
+    text idioma
+    bool activo
   }
+
+  progreso {
+    uuid id
+    uuid usuario_id
+    uuid documento_id
+    uuid voz_id
+    uuid segmento_id
+    int intra_ms
+  }
+
+  biblioteca {
+    bigint id_libro_usuario
+    bigint id_usuario
+    bigint id_libro
+    numeric progreso
+  }
+```
+
+### 8.2 Catálogo (Libros, Autores, Categorías, Géneros, Países, Estados)
+
+```mermaid
+erDiagram
+  tbl_paises ||--o{ tbl_autores : "origen_autor"
+  tbl_paises ||--o{ tbl_libros : "origen_libro"
+  tbl_estados ||--o{ tbl_libros : "estado_libro"
+  tbl_libros ||--o{ tbl_libros_x_autores : "rel_autor"
+  tbl_autores ||--o{ tbl_libros_x_autores : "en_libro"
+  tbl_libros ||--o{ tbl_libros_x_categorias : "rel_categoria"
+  tbl_categorias ||--o{ tbl_libros_x_categorias : "en_libro"
+  tbl_libros ||--o{ tbl_libros_x_generos : "rel_genero"
+  tbl_generos ||--o{ tbl_libros_x_generos : "en_libro"
 
   tbl_libros {
-    bigint id_libro PK
+    bigint id_libro
     text titulo
     text descripcion
     date fecha_publicacion
@@ -263,142 +296,212 @@ erDiagram
     text archivo
     int paginas
     int palabras
-    bigint id_pais FK
-    bigint id_estado FK
+    bigint id_pais
+    bigint id_estado
     text categoria
   }
 
+  tbl_autores {
+    bigint id_autor
+    text nombre
+    text descripcion
+    text foto
+    date fecha_nacimiento
+    date fecha_muerte
+    bigint id_pais
+  }
+
+  tbl_categorias {
+    int id_categoria
+    text nombre
+    text descripcion
+    timestamp created_at
+  }
+
+  tbl_generos {
+    bigint id_genero
+    text nombre
+  }
+
+  tbl_paises {
+    bigint id_pais
+    text nombre
+  }
+
+  tbl_estados {
+    bigint id_estado
+    text nombre
+  }
+
   tbl_libros_x_autores {
-    bigint id_libro_autor PK
-    bigint id_libro FK
-    bigint id_autor FK
+    bigint id_libro_autor
+    bigint id_libro
+    bigint id_autor
   }
 
   tbl_libros_x_categorias {
-    int id_libro FK
-    int id_categoria FK
+    bigint id_libro
+    int id_categoria
     timestamp created_at
   }
 
   tbl_libros_x_generos {
-    bigint id_libro_genero PK
-    bigint id_libro FK
-    bigint id_genero FK
+    bigint id_libro_genero
+    bigint id_libro
+    bigint id_genero
   }
+```
 
-  tbl_publicados {
-    bigint id_publicado PK
-    bigint id_usuario FK
-    bigint id_libro FK
-  }
+### 8.3 Documentos y Segmentación
 
-  tbl_libros_x_usuarios {
-    bigint id_libro_usuario PK
-    bigint id_usuario FK
-    bigint id_libro FK
-    bigint id_voz
-    bigint id_playbackrate FK
-    bigint pagina
-    bigint palabra
-    numeric progreso
-    int tiempo_escucha
-    date fecha_ultima_lectura
-    bigint id_estado FK
-    text audio
-  }
+```mermaid
+erDiagram
+  tbl_libros ||--|| tbl_documentos : "uno_a_uno"
+  tbl_documentos ||--o{ tbl_segmentos : "segmenta"
 
   tbl_documentos {
-    uuid id PK
-    int libro_id FK
-    varchar estado
-    varchar texto_hash
+    uuid id
+    bigint libro_id
+    text estado
+    text texto_hash
     int total_caracteres
     int total_segmentos
-    timestamptz created_at
-    timestamptz updated_at
+    timestamp created_at
+    timestamp updated_at
   }
 
   tbl_segmentos {
-    uuid id PK
-    uuid documento_id FK
+    uuid id
+    uuid documento_id
     int orden
     int pagina_inicio
     int pagina_fin
     int char_inicio
     int char_fin
     text texto
-    varchar texto_hash
-    timestamptz created_at
+    text texto_hash
+    timestamp created_at
   }
+```
+
+### 8.4 Audio y Voces
+
+```mermaid
+erDiagram
+  tbl_documentos ||--o{ tbl_audios : "audios_doc"
+  tbl_segmentos ||--o{ tbl_audios : "audio_segmento"
+  tbl_voces ||--o{ tbl_audios : "voz_audio"
 
   tbl_voces {
-    uuid id PK
-    varchar proveedor
-    varchar codigo_voz
-    varchar idioma
-    jsonb configuracion
+    uuid id
+    text proveedor
+    text codigo_voz
+    text idioma
+    json configuracion
     bool activo
-    timestamptz created_at
+    timestamp created_at
   }
 
   tbl_audios {
-    uuid id PK
-    uuid documento_id FK
-    uuid segmento_id FK
-    uuid voz_id FK
+    uuid id
+    uuid documento_id
+    uuid segmento_id
+    uuid voz_id
     text audio_url
     int duracion_ms
     int sample_rate
-    timestamptz created_at
-    timestamptz last_access_at
+    timestamp created_at
+    timestamp last_access_at
     int access_count
   }
+```
 
-  tbl_progreso {
-    uuid id PK
-    uuid usuario_id
-    uuid documento_id FK
-    uuid voz_id FK
-    uuid segmento_id FK
-    int intra_ms
-    int offset_global_char
-    timestamptz updated_at
-  }
+### 8.5 Biblioteca y Usuario
 
-  %% Relaciones base
-  tbl_estados ||--o{ tbl_libros : "estado"
-  tbl_estados ||--o{ tbl_usuarios : "estado"
-  tbl_estados ||--o{ tbl_libros_x_usuarios : "estado"
-
-  tbl_paises ||--o{ tbl_autores : "origen"
-  tbl_paises ||--o{ tbl_libros : "publicación"
-
+```mermaid
+erDiagram
+  tbl_estados ||--o{ tbl_usuarios : "estado_usuario"
   tbl_usuarios ||--o{ tbl_publicados : "publica"
   tbl_libros ||--o{ tbl_publicados : "publicado"
-
-  tbl_autores ||--o{ tbl_libros_x_autores : "participa"
-  tbl_libros ||--o{ tbl_libros_x_autores : "tiene"
-
-  tbl_categorias ||--o{ tbl_libros_x_categorias : "categoriza"
-  tbl_libros ||--o{ tbl_libros_x_categorias : "tiene"
-
-  tbl_generos ||--o{ tbl_libros_x_generos : "etiqueta"
-  tbl_libros ||--o{ tbl_libros_x_generos : "tiene"
-
-  tbl_usuarios ||--o{ tbl_libros_x_usuarios : "lee"
+  tbl_usuarios ||--o{ tbl_libros_x_usuarios : "biblioteca"
   tbl_libros ||--o{ tbl_libros_x_usuarios : "en_biblioteca"
   tbl_playbackrate ||--o{ tbl_libros_x_usuarios : "velocidad"
+  tbl_estados ||--o{ tbl_libros_x_usuarios : "estado_rel"
 
-  tbl_libros ||--o{ tbl_documentos : "procesa"
-  tbl_documentos ||--o{ tbl_segmentos : "segmenta"
+  tbl_usuarios {
+    bigint id_usuario
+    text id_supabase
+    text nombre
+    text correo
+    timestamp fecha_registro
+    text foto_perfil
+    bigint id_estado
+    timestamp ultimo_login
+    text firebase_uid
+  }
 
-  tbl_voces ||--o{ tbl_audios : "voz"
-  tbl_documentos ||--o{ tbl_audios : "audios"
-  tbl_segmentos ||--o{ tbl_audios : "audio_por_segmento"
+  tbl_publicados {
+    bigint id_publicado
+    bigint id_usuario
+    bigint id_libro
+  }
 
-  tbl_voces ||--o{ tbl_progreso : "voz"
+  tbl_playbackrate {
+    bigint id_playbackrate
+    double velocidad
+  }
+
+  tbl_libros_x_usuarios {
+    bigint id_libro_usuario
+    bigint id_usuario
+    bigint id_libro
+    bigint id_voz
+    bigint id_playbackrate
+    bigint pagina
+    bigint palabra
+    numeric progreso
+    int tiempo_escucha
+    date fecha_ultima_lectura
+    bigint id_estado
+    text audio
+  }
+```
+
+### 8.6 Progreso
+
+```mermaid
+erDiagram
   tbl_documentos ||--o{ tbl_progreso : "progreso_doc"
-  tbl_segmentos ||--o{ tbl_progreso : "posicion"
+  tbl_segmentos ||--o{ tbl_progreso : "progreso_segmento"
+  tbl_voces ||--o{ tbl_progreso : "progreso_voz"
+  %% usuario_id sin FK en el esquema original
+
+  tbl_progreso {
+    uuid id
+    uuid usuario_id
+    uuid documento_id
+    uuid voz_id
+    uuid segmento_id
+    int intra_ms
+    int offset_global_char
+    timestamp updated_at
+  }
+```
+
+### 8.7 Catálogos Auxiliares
+
+```mermaid
+erDiagram
+  tbl_generosvoz {
+    bigint id_genero_voz
+    text nombre
+  }
+
+  tbl_idiomas {
+    bigint id_idioma
+    text codigo
+    text nombre
+  }
 ```
 
 Notas:

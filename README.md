@@ -1,94 +1,115 @@
 # 📚 Loom — Lectura Inteligente con Voces Naturales y Conversión Automática de PDFs
 
-> Convierte libros y PDFs en experiencias auditivas fluidas con selección de voz, generación bajo demanda y seguimiento de progreso persistente. Diseñado para aprendizaje auditivo, accesibilidad y lectura asistida.
+> Convierte libros y PDFs en experiencias auditivas fluidas con selección de voz, generación bajo demanda y seguimiento de progreso persistente. Diseñado para aprendizaje auditivo, accesibilidad y lectura aumentada.
 
 ---
 
 ## 🧭 Tabla de Contenido
 1. 🚀 Visión General
-2. 🎯 Motivación
-3. 🗂️ Funcionalidades Clave (Resumen + Detalle)
-4. 🧱 Principios de Diseño
-5. 🧑‍💻 Arquitectura General (Capas y Componentes)
-6. 🔄 Flujos Operativos Principales
-7. 🧬 Modelo de Datos (ER Actualizado)
-8. 📡 Endpoints REST (Resumen)
-9. 🛠️ Servicios Internos y Scripts (Tabla Completa)
-10. ⚙️ Backend (Detalles Técnicos)
-11. 📱 Frontend (Flutter App)
-12. ☁️ Infraestructura y Despliegue
-13. 🔐 Variables de Entorno
-14. 🧪 Estrategia de Procesamiento & Optimización TTS
-15. ▶️ Instalación y Entorno Local
-16. 🧊 Roadmap / Futuras Mejores
-17. 🕵️ Observabilidad y Mantenimiento
-18. 🤝 Contribuir
-19. 📄 Licencia
+2. ✨ Demo Rápida
+3. 🎯 Motivación
+4. 🗂️ Funcionalidades Clave
+5. 🧱 Principios de Diseño
+6. 🧑‍💻 Arquitectura General
+7. 🔄 Flujos Operativos
+8. 🧬 Modelo de Datos (ER Limpio y Actualizado)
+9. 🔌 Endpoints REST (Resumen)
+10. 🛠️ Servicios Internos y Scripts
+11. ⚙️ Backend (Detalles Técnicos)
+12. 📱 Frontend (Flutter)
+13. 🧩 Tecnologías y Librerías (con logos)
+14. ☁️ Infraestructura y Despliegue
+15. 🔐 Variables de Entorno
+16. 🧪 Estrategia de Procesamiento & Optimización TTS
+17. ▶️ Instalación y Entorno Local
+18. 🧊 Roadmap
+19. 🕵️ Observabilidad y Mantenimiento
+20. 🤝 Contribuir
+21. 📄 Licencia
 
 ---
 
 ## 🚀 1. Visión General
-Loom es un ecosistema (Backend Express + Flutter + Storage Supabase + TTS Azure/Free) que ingiere PDFs, los segmenta inteligentemente y produce audios reproducibles de forma progresiva y escalable. Prioriza:
+
+Loom es un ecosistema (Backend Express + Flutter + Supabase + TTS Azure/Free) que ingiere PDFs, los segmenta inteligentemente y produce audios reproducibles de forma progresiva y escalable:
 - Inicio rápido (primer audio disponible en segundos).
 - Precarga inteligente de siguientes segmentos.
-- Capacidad de alternar proveedor de TTS (Azure vs Free Google-Translate TTS) según disponibilidad.
+- Conmutación de proveedor TTS (Azure / Free) según disponibilidad.
 - Persistencia y reanudación de progreso multi-voz por documento.
+- Cache de audios para reducir costos y latencia.
 
-## 🎯 2. Motivación
-Problemas comunes en lectura tradicional: baja retención auditiva, accesibilidad limitada, fricción para convertir contenidos personales. Loom soluciona:
-- Conversión automática de PDFs sin pasos manuales complejos.
-- Voces neuronales (cuando hay credenciales Azure) o fallback gratuito.
-- Modelo incremental: se puede escuchar mientras se sigue generando.
-- Cache y reutilización de audios (evita costos repetidos).
+---
 
-## 🗂️ 3. Funcionalidades Clave
+## ✨ 2. Demo Rápida
 
-| Área | Funcionalidad | Detalle | Estado |
-|------|---------------|---------|--------|
-| Biblioteca | Listado enriquecido | Autores, géneros, categorías agregadas vía joins | ✅ |
-| Subida PDF | Multipart + análisis | Extrae páginas, palabras y lanza segmentación background | ✅ |
-| Segmentación | Oraciones → chunks | ~1500 chars, salta metadatos iniciales (~3000 chars) | ✅ |
-| TTS On-Demand | /tts/segment | Genera y cachea por segmento/voz | ✅ |
-| Quick Start | Primer audio síncrono | Genera 1er segmento y lanza 3 siguientes en background | ✅ |
-| Playlist | Request progresivo | Devuelve primeros 5 segmentos + precarga siguientes | ✅ |
-| Progreso | Persistencia local + backend | Guarda intra_ms + offset global de caracteres | ✅ |
-| Biblioteca Usuario | Asociación libros ↔ usuario | Tabla `tbl_libros_x_usuarios` con progreso ligero | ✅ |
-| Precarga Batch | Worker Redis | Encola segmentos para generación paralela | ✅ (opcional) |
-| Limpieza Cache | TTL + LRU | Script elimina audios antiguos / excedidos | ✅ |
-| Multi Proveedor | Azure / Free | Selección automática (variables o fallback) | ✅ |
+- Subes un PDF, eliges una voz y reproduces de inmediato el primer segmento.
+- El sistema pre-genera y cachea los próximos segmentos en segundo plano.
+- Puedes pausar/continuar y cambiar de voz sin perder tu progreso.
 
-## 🧱 4. Principios de Diseño
-- Idempotencia: generación de audio usa UPSERT/ON CONFLICT para evitar duplicados.
-- Latencia percibida baja: entregar primer segmento rápido y diferir el resto.
-- Observabilidad mínima: endpoint `/health` verifica DB y voces.
-- Degradación controlada: sin Azure → Free TTS; sin Redis → cola deshabilitada.
-- Aislamiento de responsabilidades: segmentación separada en worker y servicios TTS desacoplados.
+---
 
-## 🧑‍💻 5. Arquitectura General
+## 🎯 3. Motivación
+
+Dificultades comunes:
+- Convertir PDFs a audio es tedioso y costoso.
+- Baja retención y accesibilidad limitada en lectura tradicional.
+- Bloqueos por latencia de TTS.
+
+Cómo Loom lo resuelve:
+- Conversión automática y progresiva por segmentos.
+- Voces neuronales (Azure) o fallback gratuito (Google Translate TTS).
+- Cache inteligente de audios y reintentos con degradación controlada.
+
+---
+
+## 🗂️ 4. Funcionalidades Clave
+
+- Biblioteca enriquecida con autores, géneros y categorías.
+- Subida de PDFs (multipart) + portada + clasificación.
+- Segmentación por oraciones en chunks (~1,500 chars).
+- TTS bajo demanda por segmento/voz con cache de resultados.
+- Quick Start: primer audio síncrono, resto en background.
+- Playlist inicial con precarga (cola opcional).
+- Progreso persistente (intra_ms y offset global).
+- Workers para segmentación, TTS paralelo y limpieza de cache.
+
+---
+
+## 🧱 5. Principios de Diseño
+
+- Idempotencia en generación y cache de audios.
+- Baja latencia percibida: priorizar primer segmento.
+- Observabilidad y health-check básicos.
+- Degradación segura: sin Azure → Free TTS; sin Redis → sin cola.
+- Separación de responsabilidades (API, servicios, workers).
+
+---
+
+## 🧑‍💻 6. Arquitectura General
 
 ```mermaid
 flowchart LR
-  subgraph Móvil[Flutter App]
+  subgraph App[Flutter App]
     A[Auth + Usuario] --> B[Catálogo Libros]
     B --> C[Reproductor / Progreso]
-    D[Uploader PDF]
+    D[Subida PDF]
   end
 
   subgraph API[Express Backend]
-    R[Router / Endpoints]
+    R[Router]
     CTRL[Controllers]
-    SVC[Servicios TTS / PDF]
+    SVC[Servicios TTS/PDF]
     Q[(Cola Redis BullMQ)]
     WK[Workers]
   end
 
   subgraph Data[Supabase]
-    PG[(Postgres)]
+    PG[(PostgreSQL)]
     ST[(Storage PDFs/Audios)]
     AUTH[Auth]
   end
 
-  TTSProv[(Azure / Free TTS)]
+  TTS[(Azure Speech / Free TTS)]
 
   D --> R
   A --> R
@@ -96,23 +117,16 @@ flowchart LR
   C --> R
   R --> CTRL --> SVC --> PG
   SVC --> ST
-  SVC --> TTSProv
+  SVC --> TTS
   CTRL --> Q --> WK --> ST
   WK --> PG
 ```
 
-### Capas
-| Capa | Rol | Archivos principales |
-|------|-----|---------------------|
-| Routing | Define endpoints REST | `routes/routes.js` |
-| Controllers | Orquestación HTTP | `controllers/*.js` |
-| Services | Lógica de dominio (TTS provider selector, cola, generación) | `services/*.js` |
-| Workers | Procesamiento asíncrono (segmentación, generación paralela, limpieza) | `workers/*.js` |
-| DB Access | Conexión Postgres / Supabase | `db/client.js`, migraciones SQL |
+---
 
-## 🔄 6. Flujos Operativos Principales
+## 🔄 7. Flujos Operativos
 
-### 6.1 Subida PDF → Segmentación → Audios
+### 7.1 Subida PDF → Segmentación → Audios
 ```mermaid
 sequenceDiagram
   participant F as Flutter
@@ -120,7 +134,7 @@ sequenceDiagram
   participant ST as Supabase Storage
   participant SEG as Worker Segmentación
   participant DB as Postgres
-  participant TTS as Provider (Azure/Free)
+  participant TTS as Proveedor (Azure/Free)
 
   F->>E: POST /libros (multipart PDF + portada + categorías)
   E->>ST: Guardar PDF
@@ -135,12 +149,12 @@ sequenceDiagram
   SEG->>Q: Encolar primeros segmentos (opcional)
   Q->>WK: Jobs generación TTS
   WK->>TTS: Synthesize
-  TTS-->>WK: Audio
+  TTS-->>WK: MP3
   WK->>ST: Subir MP3
   WK->>DB: Cache tbl_audios
 ```
 
-### 6.2 Reproducción On-Demand (Segmento aislado)
+### 7.2 Reproducción On-Demand (Segmento)
 ```mermaid
 sequenceDiagram
   participant F as Flutter
@@ -163,7 +177,7 @@ sequenceDiagram
   end
 ```
 
-### 6.3 Quick Start
+### 7.3 Quick Start + Precarga
 ```mermaid
 sequenceDiagram
   F->>E: POST /tts/libro/:libroId/quick-start (voiceId)
@@ -173,49 +187,72 @@ sequenceDiagram
   E->>ST: Subir audio
   E->>DB: Cache tbl_audios
   E-->>F: JSON {first_audio_url}
-  E->>WK: (Background) Generar siguientes 3 segmentos
+  E->>WK: (BG) Generar siguientes segmentos
 ```
 
-### 6.4 Playlist Inicial + Precarga
-```mermaid
-sequenceDiagram
-  F->>E: POST /tts/playlist {document_id, voice_id}
-  E->>DB: Resolver documento + estado
-  E->>DB: Obtener primeros 5 segmentos + audios
-  E->>Q: Encolar próximos 10 pendientes
-  E-->>F: JSON {items[], start_segment_id}
-```
+---
 
-### 6.5 Progreso
-```mermaid
-sequenceDiagram
-  F->>E: POST /progress {document_id, voice_id, segment_id, intra_ms}
-  E->>DB: UPSERT tbl_progreso
-  F->>E: GET /progress?doc=...
-  E->>DB: SELECT último progreso
-  E-->>F: JSON progreso
-```
+## 🧬 8. Modelo de Datos (ER Limpio y Actualizado)
 
-## 🧬 7. Modelo de Datos (ER Actualizado)
-
-Se muestra el esquema derivado (simplificado visual) del SQL proporcionado. No ejecutar directamente; fines documentales.
+Basado en el SQL proporcionado (documental; no ejecutar). Relaciones y tablas principales:
 
 ```mermaid
 erDiagram
-  tbl_usuarios ||--o{ tbl_libros_x_usuarios : "lee"
-  tbl_libros ||--o{ tbl_libros_x_autores : "tiene"
-  tbl_autores ||--o{ tbl_libros_x_autores : "participa"
-  tbl_libros ||--o{ tbl_libros_x_generos : "clasifica"
-  tbl_generos ||--o{ tbl_libros_x_generos : "etiqueta"
-  tbl_libros ||--o{ tbl_libros_x_categorias : "categ"
-  tbl_categorias ||--o{ tbl_libros_x_categorias : "aplica"
-  tbl_libros ||--o{ tbl_documentos : "procesa"
-  tbl_documentos ||--o{ tbl_segmentos : "segmenta"
-  tbl_segmentos ||--o{ tbl_audios : "audio"
-  tbl_voces ||--o{ tbl_audios : "voz"
-  tbl_voces ||--o{ tbl_progreso : "voz"
-  tbl_documentos ||--o{ tbl_progreso : "track"
-  tbl_segmentos ||--o{ tbl_progreso : "posicion"
+  %% Entidades
+  tbl_usuarios {
+    bigint id_usuario PK
+    text id_supabase UNIQUE
+    text nombre UNIQUE
+    text correo UNIQUE
+    timestamp fecha_registro
+    text foto_perfil
+    bigint id_estado FK
+    timestamp ultimo_login
+    text firebase_uid
+  }
+
+  tbl_estados {
+    bigint id_estado PK
+    text nombre
+  }
+
+  tbl_paises {
+    bigint id_pais PK
+    text nombre
+  }
+
+  tbl_autores {
+    bigint id_autor PK
+    text nombre
+    text descripcion
+    text foto
+    date fecha_nacimiento
+    date fecha_muerte
+    bigint id_pais FK
+  }
+
+  tbl_categorias {
+    int id_categoria PK
+    varchar nombre UNIQUE
+    text descripcion
+    timestamp created_at
+  }
+
+  tbl_generos {
+    bigint id_genero PK
+    text nombre
+  }
+
+  tbl_idiomas {
+    bigint id_idioma PK
+    varchar codigo
+    varchar nombre
+  }
+
+  tbl_playbackrate {
+    bigint id_playbackrate PK
+    float velocidad
+  }
 
   tbl_libros {
     bigint id_libro PK
@@ -224,62 +261,157 @@ erDiagram
     date fecha_publicacion
     text portada
     text archivo
-    integer paginas
-    integer palabras
-    text categoria (legacy)
+    int paginas
+    int palabras
+    bigint id_pais FK
+    bigint id_estado FK
+    text categoria
   }
+
+  tbl_libros_x_autores {
+    bigint id_libro_autor PK
+    bigint id_libro FK
+    bigint id_autor FK
+  }
+
+  tbl_libros_x_categorias {
+    int id_libro FK
+    int id_categoria FK
+    timestamp created_at
+  }
+
+  tbl_libros_x_generos {
+    bigint id_libro_genero PK
+    bigint id_libro FK
+    bigint id_genero FK
+  }
+
+  tbl_publicados {
+    bigint id_publicado PK
+    bigint id_usuario FK
+    bigint id_libro FK
+  }
+
+  tbl_libros_x_usuarios {
+    bigint id_libro_usuario PK
+    bigint id_usuario FK
+    bigint id_libro FK
+    bigint id_voz
+    bigint id_playbackrate FK
+    bigint pagina
+    bigint palabra
+    numeric progreso
+    int tiempo_escucha
+    date fecha_ultima_lectura
+    bigint id_estado FK
+    text audio
+  }
+
   tbl_documentos {
     uuid id PK
-    integer libro_id FK
+    int libro_id FK
     varchar estado
-    integer total_segmentos
-    integer total_caracteres
+    varchar texto_hash
+    int total_caracteres
+    int total_segmentos
+    timestamptz created_at
     timestamptz updated_at
   }
+
   tbl_segmentos {
     uuid id PK
     uuid documento_id FK
-    integer orden
-    integer char_inicio
-    integer char_fin
+    int orden
+    int pagina_inicio
+    int pagina_fin
+    int char_inicio
+    int char_fin
     text texto
+    varchar texto_hash
+    timestamptz created_at
   }
-  tbl_audios {
-    uuid id PK
-    uuid documento_id FK
-    uuid segmento_id FK
-    uuid voz_id FK
-    text audio_url
-    integer duracion_ms
-  }
+
   tbl_voces {
     uuid id PK
     varchar proveedor
     varchar codigo_voz
     varchar idioma
     jsonb configuracion
-    boolean activo
+    bool activo
+    timestamptz created_at
   }
+
+  tbl_audios {
+    uuid id PK
+    uuid documento_id FK
+    uuid segmento_id FK
+    uuid voz_id FK
+    text audio_url
+    int duracion_ms
+    int sample_rate
+    timestamptz created_at
+    timestamptz last_access_at
+    int access_count
+  }
+
   tbl_progreso {
     uuid id PK
     uuid usuario_id
     uuid documento_id FK
     uuid voz_id FK
     uuid segmento_id FK
-    integer intra_ms
-    integer offset_global_char
+    int intra_ms
+    int offset_global_char
+    timestamptz updated_at
   }
+
+  %% Relaciones base
+  tbl_estados ||--o{ tbl_libros : "estado"
+  tbl_estados ||--o{ tbl_usuarios : "estado"
+  tbl_estados ||--o{ tbl_libros_x_usuarios : "estado"
+
+  tbl_paises ||--o{ tbl_autores : "origen"
+  tbl_paises ||--o{ tbl_libros : "publicación"
+
+  tbl_usuarios ||--o{ tbl_publicados : "publica"
+  tbl_libros ||--o{ tbl_publicados : "publicado"
+
+  tbl_autores ||--o{ tbl_libros_x_autores : "participa"
+  tbl_libros ||--o{ tbl_libros_x_autores : "tiene"
+
+  tbl_categorias ||--o{ tbl_libros_x_categorias : "categoriza"
+  tbl_libros ||--o{ tbl_libros_x_categorias : "tiene"
+
+  tbl_generos ||--o{ tbl_libros_x_generos : "etiqueta"
+  tbl_libros ||--o{ tbl_libros_x_generos : "tiene"
+
+  tbl_usuarios ||--o{ tbl_libros_x_usuarios : "lee"
+  tbl_libros ||--o{ tbl_libros_x_usuarios : "en_biblioteca"
+  tbl_playbackrate ||--o{ tbl_libros_x_usuarios : "velocidad"
+
+  tbl_libros ||--o{ tbl_documentos : "procesa"
+  tbl_documentos ||--o{ tbl_segmentos : "segmenta"
+
+  tbl_voces ||--o{ tbl_audios : "voz"
+  tbl_documentos ||--o{ tbl_audios : "audios"
+  tbl_segmentos ||--o{ tbl_audios : "audio_por_segmento"
+
+  tbl_voces ||--o{ tbl_progreso : "voz"
+  tbl_documentos ||--o{ tbl_progreso : "progreso_doc"
+  tbl_segmentos ||--o{ tbl_progreso : "posicion"
 ```
 
-### Notas:
-- `orden=0` en `tbl_segmentos` actúa como offset inicial tras saltar metadatos (segmento metadata). Reproducción real comienza en `orden>0`.
-- `tbl_libros_x_usuarios` almacena progreso ligero adicional (`fecha_ultima_lectura`, `progreso`, etc.).
-- Cache de audio (`tbl_audios`) permite métricas de acceso (`access_count`, `last_access_at`).
+Notas:
+- Se modelan todas las FKs declaradas en el SQL. `usuario_id` en `tbl_progreso` no tiene FK en el SQL original; se mantiene como atributo suelto.
+- `tbl_audios` registra `access_count` y `last_access_at` para limpieza y métricas.
+- `tbl_libros_x_usuarios` almacena progreso ligero por usuario/libro (además de `tbl_progreso` por documento/voz/segmento).
 
-## 📡 8. Endpoints REST (Resumen)
+---
+
+## 📡 9. Endpoints REST (Resumen)
 
 | Método | Ruta | Propósito | Parámetros clave |
-|--------|------|-----------|------------------|
+|-------:|------|-----------|------------------|
 | GET | /disponibles | Listar libros enriquecidos | - |
 | GET | /categorias | Listar categorías | - |
 | GET | /biblioteca/:userId | Biblioteca usuario | userId (bigint) |
@@ -298,58 +430,87 @@ erDiagram
 | GET | /health | Salud sistema | - |
 | GET | /ping | Diagnóstico rápido | - |
 
-## 🛠️ 9. Servicios Internos y Scripts
+---
 
-| Nombre | Tipo | Archivo | Responsabilidad Principal | Detalles / Notas |
-|--------|------|---------|---------------------------|------------------|
-| Supabase Client | Config | `config/supabase.js` | Acceso a Storage/DB (service role) | Mantener fuera de frontend |
-| Postgres Client | DB | `db/client.js` | Conexión SQL nativa | Usa `postgres` lib SSL require |
-| Segmentación PDF | Worker | `workers/process_pdf.js` | Extraer texto y crear segmentos | Salta metadatos iniciales, hash contenido |
-| Cola TTS | Servicio | `services/tts_queue.js` | Encolado batch (BullMQ) | Auto deshabilita si Redis no disponible |
-| Worker TTS | Worker | `workers/tts_worker.js` | Generación paralela (Azure) | Concurrencia 6, limiter 10/s |
-| Limpieza Cache | Worker | `workers/cache_cleanup.js` | TTL + LRU + métricas | Control por env: TTL & cuota |
-| Provider Selector | Servicio | `services/tts_provider.js` | Decide Azure vs Free | Fallback si no hay credenciales |
-| Azure TTS | Servicio | `services/azure_tts.js` | SSML, reintentos, pitch/rate | Mock opcional `MOCK_TTS` |
-| Free TTS | Servicio | `services/free_tts.js` | Google Translate TTS | Sin variación real de voces |
-| Playlist / Segment Audio | Controller | `controllers/tts_controllers.js` | Generar, cachear y playlist | Quick-start, precarga batch |
-| Libros / Biblioteca | Controller | `controllers/books_controllers.js` | CRUD libros y subida PDF | Subida portada y categorías |
-| Usuario | Controller | `controllers/user_controllers.js` | Asegurar usuario | Usa firebaseUid/email |
-| Salud | Controller | `controllers/health_controller.js` | Reporte integridad | Variables, tablas |
-| Migraciones SQL | Data | `db/migrations/*.sql` | Evolución esquema | Voces, usuarios, TTS, categorías |
-| Diagnóstico TTS | Script | `diagnose_tts_status.js` | Estado generación por libro | Útil para auditoría |
-| Generación Batch | Script | `generate_batch_audios.js` | Lote audios faltantes | Pre-carga manual |
-| Generar Primeros Audios | Script | `generate_first_audios_all_books.js` | Bootstrapping catálogo | Primer segmento por libro |
-| Limpieza Azure Voces | Script | `cleanup_azure_voices.js` | Quitar voces obsoletas | Pre migración a Free |
-| Checkers DB | Scripts | `check_*` | Integridad (audios, libros, segmentos) | Mantenimiento |
+## 🛠️ 10. Servicios Internos y Scripts
 
-## ⚙️ 10. Backend (Detalles Técnicos)
-- Framework: Express 5 (module type ESM).
-- Almacenamiento de archivos: Supabase Storage (bucket `archivos_libros` PDFs / `audios_tts` MP3s).
-- Generación TTS: Función on-demand + cola opcional via Redis.
-- Estrategia de reintentos TTS Azure: exponencial (2s, 4s, 6s) + fallback REST.
-- Seguridad básica: Restricción por claves service role (no exponer en frontend). (Pendiente: auth robusta para progreso por usuario real y RLS).
-- Logging: Morgan (+ console detallado en workers).
+- Supabase Client: `config/supabase.js` → DB/Storage (service role).
+- Postgres Client: `db/client.js` → conexión SQL nativa.
+- Segmentación PDF: `workers/process_pdf.js` → extracción texto + segmentos.
+- Cola TTS: `services/tts_queue.js` (BullMQ) → encolado batch.
+- Worker TTS: `workers/tts_worker.js` → generación paralela (Azure/Free).
+- Limpieza Cache: `workers/cache_cleanup.js` → TTL + LRU.
+- Selector de Proveedor: `services/tts_provider.js` → Azure vs Free.
+- Azure TTS: `services/azure_tts.js` → SSML + reintentos.
+- Free TTS: `services/free_tts.js` → Google Translate TTS.
+- Controladores TTS: `controllers/tts_controllers.js`.
+- Controladores Libros: `controllers/books_controllers.js`.
+- Controladores Usuario: `controllers/user_controllers.js`.
+- Salud: `controllers/health_controller.js`.
+- Migraciones SQL: `db/migrations/*.sql`.
 
-## 📱 11. Frontend (Flutter)
-- Resolución dinámica de base URL (`ApiService.resolveBaseUrl()`).
-- Reproductor basado en `just_audio` + precarga manual siguiente segmento.
-- Subida PDF y portada con `MultipartRequest` (muestra tamaños y logs detallados).
-- Persistencia local de progreso (SharedPreferences) + sincronización perezosa backend.
-- Quick Start UX: usuario escucha primer segmento mientras se generan los siguientes.
-- Autenticación: Firebase + ensureUser en backend (vincula `firebase_uid` ↔ `tbl_usuarios`).
+---
 
-## ☁️ 12. Infraestructura y Despliegue
-| Componente | Opción Actual | Alternativas Futuras |
-|------------|---------------|----------------------|
-| DB + Storage | Supabase | Postgres administrado + S3/MinIO |
-| TTS | Azure / Free | Proveedor multi (ElevenLabs, Polly, Local Piper) |
-| Cola | Redis opcional | Cloud Redis / RabbitMQ / NATS |
-| Backend | Render / Local Dev | Docker Swarm / K8s |
-| CDN | (Pendiente) | Cloudflare / Fastly para MP3 |
+## ⚙️ 11. Backend (Detalles Técnicos)
 
-Escalado futuro: microservicio TTS independiente, caché Redis para metadatos, compresión dinámica de audio.
+- Framework: Express 5 (ESM).
+- Archivos: Supabase Storage (PDFs y MP3s).
+- TTS: on-demand + cola opcional Redis.
+- Reintentos Azure: backoff exponencial (2s, 4s, 6s) + fallback Free.
+- Seguridad: claves service role sólo en backend; pendiente RLS.
+- Logging: Morgan + logs enriquecidos en workers.
 
-## 🔐 13. Variables de Entorno
+---
+
+## 📱 12. Frontend (Flutter)
+
+- Resolución dinámica de base URL.
+- Reproductor con `just_audio` y precarga del siguiente segmento.
+- Subida de PDF y portada (Multipart).
+- Persistencia local de progreso + sync perezosa.
+- Quick Start: escuchar mientras se generan siguientes segmentos.
+- Autenticación con Firebase y ensureUser en backend.
+
+---
+
+## 🧩 13. Tecnologías y Librerías
+
+- Backend:
+  - ![Node.js](https://img.shields.io/badge/Node.js-339933?logo=nodedotjs&logoColor=white)
+  - ![Express](https://img.shields.io/badge/Express-000000?logo=express&logoColor=white)
+  - ![BullMQ](https://img.shields.io/badge/BullMQ-CC0000?logo=redis&logoColor=white)
+  - ![Morgan](https://img.shields.io/badge/Morgan-000000?logo=npm&logoColor=white)
+- Frontend:
+  - ![Flutter](https://img.shields.io/badge/Flutter-02569B?logo=flutter&logoColor=white)
+  - ![Dart](https://img.shields.io/badge/Dart-0175C2?logo=dart&logoColor=white)
+  - ![just_audio](https://img.shields.io/badge/just__audio-3D3D3D?logo=musicbrainz&logoColor=white)
+- Datos/Infra:
+  - ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?logo=postgresql&logoColor=white)
+  - ![Supabase](https://img.shields.io/badge/Supabase-3ECF8E?logo=supabase&logoColor=white)
+  - ![Redis](https://img.shields.io/badge/Redis-DC382D?logo=redis&logoColor=white)
+  - ![Azure](https://img.shields.io/badge/Azure%20Speech-0078D4?logo=microsoftazure&logoColor=white)
+  - ![Firebase](https://img.shields.io/badge/Firebase-FFCA28?logo=firebase&logoColor=black)
+  - ![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)
+  - ![Cloudflare](https://img.shields.io/badge/Cloudflare-F38020?logo=cloudflare&logoColor=white)
+
+---
+
+## ☁️ 14. Infraestructura y Despliegue
+
+| Componente | Actual | Alternativas |
+|-----------|--------|--------------|
+| DB + Storage | Supabase | Postgres gestionado + S3/MinIO |
+| TTS | Azure / Free | ElevenLabs, Polly, Piper local |
+| Cola | Redis opcional | Redis Cloud, RabbitMQ, NATS |
+| Backend | Render / Local | Docker Swarm / K8s |
+| CDN | Pendiente | Cloudflare / Fastly para MP3 |
+
+Escalado futuro: microservicio TTS, cache Redis para metadatos, compresión dinámica.
+
+---
+
+## 🔐 15. Variables de Entorno
+
 Ver `backend/.env.example`.
 
 | Variable | Propósito | Obligatoria | Ejemplo |
@@ -357,10 +518,10 @@ Ver `backend/.env.example`.
 | DATABASE_URL | Conexión Postgres | ✅ | postgresql://user:pass@host:5432/db |
 | SUPABASE_URL | Proyecto Supabase | ✅ | https://xxx.supabase.co |
 | SUPABASE_SERVICE_ROLE_KEY | Clave service (no frontend) | ✅ | (key) |
-| AZURE_SPEECH_KEY | Azure TTS Key | ❌ (si Free) | (key) |
+| AZURE_SPEECH_KEY | Azure TTS Key | ❌ | (key) |
 | AZURE_SPEECH_REGION | Región Azure | ❌ | eastus |
 | TTS_PROVIDER | Forzar azure|free | ❌ | azure |
-| MOCK_TTS | Generar audios falsos | ❌ | true |
+| MOCK_TTS | Audios falsos | ❌ | true |
 | REDIS_HOST | Host Redis | ❌ | localhost |
 | REDIS_PORT | Puerto Redis | ❌ | 6379 |
 | QUEUE_ENABLED | Habilitar cola | ❌ | true |
@@ -368,21 +529,26 @@ Ver `backend/.env.example`.
 | MAX_CACHE_PER_DOC_VOICE_MB | Cuota cache | ❌ | 100 |
 | PORT | Puerto backend | ✅ | 3000 |
 
-## 🧪 14. Estrategia de Procesamiento & Optimización TTS
-- Precarga: playlist encola próximos 10 segmentos sin bloquear respuesta inicial.
-- Quick Start: reduce Time-To-First-Audio (TTFA) al sintetizar sólo primer segmento.
-- Cache adaptativa: acceso actualiza `last_access_at` y `access_count` (LRU + TTL script).
-- Fallback proveedor: evita interrupción cuando faltan credenciales.
-- Segmentación controlada por longitud y división por oraciones → mayor naturalidad en prosodia.
+---
 
-## ▶️ 15. Instalación y Entorno Local
+## 🧪 16. Estrategia de Procesamiento & Optimización TTS
+
+- Playlist precarga: encola próximos 10 segmentos sin bloquear la respuesta.
+- Quick Start: minimiza TTFA generando sólo el primer segmento.
+- Cache adaptativa: `last_access_at` + `access_count` (LRU + TTL).
+- Fallback proveedor: evita interrupciones por credenciales.
+- Segmentación por oraciones y longitud para naturalidad prosódica.
+
+---
+
+## ▶️ 17. Instalación y Entorno Local
 
 ### Prerrequisitos
 - Node.js LTS
-- PostgreSQL / Supabase proyecto (recomendado) 
+- PostgreSQL / Supabase
 - (Opcional) Redis para cola
-- Flutter SDK (>=3.9)
-- Credenciales Azure Speech (si deseas calidad superior)
+- Flutter SDK (>= 3.9)
+- (Opcional) Azure Speech
 
 ### Backend
 ```bash
@@ -391,24 +557,20 @@ cd Loom/backend
 cp .env.example .env
 # Edita valores (SUPABASE_URL, DATABASE_URL, etc.)
 npm install
-# (Opcional) Ejecutar migraciones en Supabase (copiar SQL)
 node test_db_connection.js
 # Iniciar
 node index.js   # o: npm run dev
 ```
 
-### Worker Segmentación Manual
+### Workers
 ```bash
+# Segmentación manual por libro
 node workers/process_pdf.js <id_libro>
-```
 
-### Worker TTS (si Redis habilitado)
-```bash
+# TTS (si Redis habilitado)
 node workers/tts_worker.js
-```
 
-### Limpieza Caché
-```bash
+# Limpieza de cache
 node workers/cache_cleanup.js
 ```
 
@@ -420,43 +582,47 @@ flutter run
 ```
 
 ### Quick Start desde Flutter (conceptual)
-1. Seleccionar libro.
-2. Obtener `voiceId` vía `/voices`.
-3. Llamar `POST /tts/libro/:id/quick-start` → reproducir `first_audio_url`.
-4. Mientras tanto player observa nuevas URLs en `/tts/libro/:id/audios`.
+1. Selecciona libro.
+2. Obtén `voiceId` vía `/voices`.
+3. `POST /tts/libro/:id/quick-start` → reproducir `first_audio_url`.
+4. Player observa nuevas URLs en `/tts/libro/:id/audios`.
 
-## 🧊 16. Roadmap / Futuras Mejores
-- [ ] Descarga offline completa de libro (batch background + index).
-- [ ] Búsqueda semántica (embeddings segmentos).
+---
+
+## 🧊 18. Roadmap
+
+- [ ] Descarga offline completa (batch + índice).
+- [ ] Búsqueda semántica (embeddings por segmento).
 - [ ] Marcadores y anotaciones sincronizadas.
-- [ ] Ajuste dinámico de velocidad/pitch en runtime.
-- [ ] Soporte multi-idioma (inglés, francés) con detección automática.
-- [ ] Panel admin web (gestión libros, voces, métricas).
-- [ ] CDN y firmas temporales para audios.
-- [ ] Integración con proveedor avanzado (ElevenLabs) y evaluación de calidad.
+- [ ] Ajuste dinámico velocidad/pitch en runtime.
+- [ ] Multi-idioma con detección automática.
+- [ ] Panel admin web (libros, voces, métricas).
+- [ ] CDN + firmas temporales para audios.
+- [ ] Integración con proveedores avanzados (ElevenLabs).
 - [ ] Cache Redis para playlist y progreso.
 - [ ] OpenAPI/Swagger + cliente generado.
 
-## 🕵️ 17. Observabilidad y Mantenimiento
-- `/health`: latencia y estado de tablas críticas.
-- Scripts `check_*`: verifican integridad (segmentos huérfanos, audios faltantes, etc.).
-- Métricas base en limpieza: storage estimado, audios cacheados, duración promedio.
-- Recomendado agregar: Prometheus exporter (futuro), trazas OpenTelemetry para generación TTS.
+---
 
-## 🤝 18. Contribuir
-1. Fork & branch (`feat/...`).
-2. Mantén convenciones de commits: `feat:`, `fix:`, `chore:`, `refactor:`, `docs:`.
-3. Adjunta logs relevantes de workers o tiempos de generación en PR.
-4. No subir claves (usa `.env`).
-5. Tests futuros: mock de TTS y segmentación determinista.
+## 🕵️ 19. Observabilidad y Mantenimiento
 
-## 📄 19. Licencia
-Considera MIT o Apache-2.0. Añade archivo `LICENSE` si aún no existe.
+- `/health`: latencia y estado de tablas clave.
+- Scripts `check_*`: integridad (huérfanos, faltantes).
+- Métricas en limpieza: storage estimado, cantidad de audios, duración promedio.
+- Recomendado a futuro: Prometheus + OpenTelemetry.
 
 ---
-### Notas Finales
-- Este README refleja estado actual del código inspeccionado.
-- Si agregas autenticación robusta (JWT / Supabase Auth RLS), documenta flujo token.
-- Para documentación API ampliada se sugiere crear `docs/api.md` y exportar OpenAPI.
 
-¿Necesitas ahora un archivo adicional con especificación OpenAPI o documentación de workers? Pídelo y lo genero.
+## 🤝 20. Contribuir
+
+1. Fork y branch (`feat/...`).
+2. Convenciones de commit: `feat:`, `fix:`, `chore:`, `refactor:`, `docs:`.
+3. Incluye logs relevantes (workers, tiempos de generación).
+4. No subir claves; usa `.env`.
+5. Tests futuros: mock TTS y segmentación determinista.
+
+---
+
+## 📄 21. Licencia
+
+Define una licencia (MIT o Apache-2.0 recomendado) y añade `LICENSE`.

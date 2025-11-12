@@ -13,6 +13,7 @@
  */
 
 import googleTTS from 'google-tts-api';
+import { processAudioBuffer } from './audio_postprocess.js';
 
 /**
  * Mapea el código de voz a un idioma soportado por Google TTS.
@@ -44,6 +45,25 @@ function mapLang(voiceCode) {
   // Default: español
   return 'es';
 }
+
+// Map voice codes to lightweight transform params for perceptual differentiation.
+// Adjust only small semitone changes to avoid artifacts.
+const VOICE_TRANSFORMS = {
+  // Female variants: slightly higher pitch
+  'es_female_1': { pitchSemitones: 0.8, speed: 1.0 },
+  'es_female_2': { pitchSemitones: 1.0, speed: 1.0 },
+  'es_female_3': { pitchSemitones: 1.2, speed: 0.98 },
+  'es_mx_female': { pitchSemitones: 1.0, speed: 0.99 },
+  'es_co_female': { pitchSemitones: 1.1, speed: 0.99 },
+  'es_ar_female': { pitchSemitones: 1.1, speed: 0.99 },
+  // Male variants: slightly lower pitch
+  'es_male_1': { pitchSemitones: -0.7, speed: 1.02 },
+  'es_male_2': { pitchSemitones: -0.9, speed: 1.03 },
+  'es_male_3': { pitchSemitones: -1.1, speed: 1.04 },
+  'es_mx_male': { pitchSemitones: -0.8, speed: 1.03 },
+  'es_co_male': { pitchSemitones: -0.8, speed: 1.03 },
+  'es_ar_male': { pitchSemitones: -0.8, speed: 1.03 },
+};
 
 export async function generateAudio(text, voiceCode, options = {}) {
   const lang = mapLang(voiceCode);
@@ -84,8 +104,19 @@ export async function generateAudio(text, voiceCode, options = {}) {
   }
   
   // Concatenar MP3s: suficiente para streaming simple
-  const finalBuffer = Buffer.concat(buffers);
-  console.log(`[Free TTS] ✅ Audio generado: ${finalBuffer.length} bytes`);
+  let finalBuffer = Buffer.concat(buffers);
+  console.log(`[Free TTS] ✅ Audio generado (pre-proc): ${finalBuffer.length} bytes`);
+
+  // Apply post-processing for pitch/speed if transform exists
+  const transform = VOICE_TRANSFORMS[String(voiceCode || '').toLowerCase()];
+  if (transform) {
+    try {
+      finalBuffer = await processAudioBuffer(finalBuffer, transform);
+      console.log(`[Free TTS] 🎛️ Post-procesado aplicado (pitch/speed)`);
+    } catch (err) {
+      console.error('[Free TTS] Post-process failed, returning original buffer', err.message);
+    }
+  }
   return finalBuffer;
 }
 

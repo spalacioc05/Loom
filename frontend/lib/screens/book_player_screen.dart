@@ -177,12 +177,72 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
   }
 
   void _changeVoice(Voice voice) async {
+    if (_currentVoice?.id == voice.id) return; // Ya está usando esta voz
+    
     setState(() => _currentVoice = voice);
-    // Reiniciar playlist con la nueva voz
+    
+    // Detener reproducción actual
+    await _player.stop();
+    
+    // Limpiar playlist
     _playlist = [];
     _currentIndex = 0;
-    await _player.stop();
-    await _ensurePlaylistLoaded();
+    
+    // Mostrar mensaje al usuario
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Cambiando a voz: ${voice.voiceCode}'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+    
+    // Usar quick-start para cargar el primer audio con la nueva voz
+    setState(() => _loadingSegment = true);
+    try {
+      final firstAudioUrl = await TtsService.instance.quickStartBook(
+        widget.book.intId,
+        voice.id,
+      );
+
+      // Ajustar velocidad automáticamente según tipo de voz (Female más lenta, Male normal)
+      if (voice.voiceCode.contains('Female')) {
+        _speed = 0.90; // ligeramente más lenta
+      } else if (voice.voiceCode.contains('Male')) {
+        _speed = 1.05; // ligeramente más rápida
+      } else {
+        _speed = 1.0; // neutra
+      }
+      await _player.setSpeed(_speed);
+      
+      // Crear playlist con el primer audio
+      // Usamos segmentId = 1 (primer segmento real) para reflejar orden > 0
+      _playlist = [
+        PlaylistItem(
+          segmentId: 1,
+          url: Uri.parse(firstAudioUrl),
+          durationMs: null,
+        ),
+      ];
+      _currentIndex = 0;
+      
+      // Reproducir automáticamente con la nueva voz
+      await _loadAndPlay(0);
+      
+      // Cargar el resto de la playlist en background
+      _ensurePlaylistLoaded();
+      
+    } catch (e) {
+      print('Error cambiando voz: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error cambiando voz: $e')),
+        );
+      }
+    } finally {
+      setState(() => _loadingSegment = false);
+    }
   }
 
   Future<void> _saveProgress() async {
@@ -449,6 +509,7 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
                     
                     // Nombre del país
                     final countryName = {
+                      'es': '🌐 Español',
                       'es-MX': '🇲🇽 México',
                       'es-ES': '🇪🇸 España',
                       'es-CO': '🇨🇴 Colombia',
@@ -456,7 +517,10 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
                       'es-CL': '🇨🇱 Chile',
                       'es-PE': '🇵🇪 Perú',
                       'es-VE': '🇻🇪 Venezuela',
-                    }[lang] ?? lang;
+                      'en': '🇺🇸 English',
+                      'en-US': '🇺🇸 English (US)',
+                      'en-GB': '🇬🇧 English (UK)',
+                    }[lang] ?? '🌐 $lang';
 
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -472,24 +536,55 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
                           ),
                         ),
                         ...voices.map((voice) {
-                          // Extraer nombre corto (ej: "DaliaNeural" -> "Dalia")
-                          final shortName = voice.voiceCode
-                              .split('-')
-                              .last
-                              .replaceAll('Neural', '');
+                          // Extraer información de la voz
+                          final parts = voice.voiceCode.split('-');
+                          String displayName;
+                          String subtitle;
+                          IconData icon;
+                          
+                          // Detectar si es Female/Male para Google TTS
+                          if (voice.voiceCode.contains('Female')) {
+                            displayName = parts.length > 2 
+                                ? '${parts[1]} Femenina ${parts.last.replaceAll('Female', '')}'
+                                : 'Voz Femenina ${parts.last.replaceAll('Female', '')}';
+                            subtitle = '${voice.voiceCode} (Lenta/Clara)';
+                            icon = Icons.woman;
+                          } else if (voice.voiceCode.contains('Male')) {
+                            displayName = parts.length > 2
+                                ? '${parts[1]} Masculina ${parts.last.replaceAll('Male', '')}'
+                                : 'Voz Masculina ${parts.last.replaceAll('Male', '')}';
+                            subtitle = '${voice.voiceCode} (Normal/Rápida)';
+                            icon = Icons.man;
+                          } else {
+                            // Fallback para otras voces
+                            displayName = voice.voiceCode.split('-').last.replaceAll('Neural', '');
+                            subtitle = voice.voiceCode;
+                            icon = Icons.record_voice_over;
+                          }
                           
                           return ListTile(
                             dense: true,
                             leading: Icon(
-                              Icons.record_voice_over,
+                              icon,
                               color: _currentVoice?.id == voice.id
                                   ? Theme.of(context).colorScheme.primary
-                                  : null,
+                                  : Colors.grey[600],
+                              size: 28,
                             ),
-                            title: Text(shortName),
-                            subtitle: Text(voice.voiceCode, style: const TextStyle(fontSize: 11)),
+                            title: Text(
+                              displayName,
+                              style: TextStyle(
+                                fontWeight: _currentVoice?.id == voice.id 
+                                    ? FontWeight.bold 
+                                    : FontWeight.normal,
+                              ),
+                            ),
+                            subtitle: Text(
+                              subtitle, 
+                              style: const TextStyle(fontSize: 11),
+                            ),
                             trailing: _currentVoice?.id == voice.id
-                                ? Icon(Icons.check, color: Theme.of(context).colorScheme.primary)
+                                ? Icon(Icons.check_circle, color: Theme.of(context).colorScheme.primary)
                                 : null,
                             onTap: () {
                               _changeVoice(voice);

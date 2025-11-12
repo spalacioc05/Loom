@@ -18,6 +18,8 @@ class _SearchScreenState extends State<SearchScreen> {
   late Future<List<Book>> _booksFuture;
   String? _userId;
   int _selectedCategoryIndex = 0;
+  String _query = '';
+  final TextEditingController _searchController = TextEditingController();
   // Categorías base (se muestran aunque la BD esté vacía o sin categorías)
   final List<String> _baseCategories = const [
     'General',
@@ -55,6 +57,12 @@ class _SearchScreenState extends State<SearchScreen> {
         });
       }
     });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadUserId() async {
@@ -169,7 +177,17 @@ class _SearchScreenState extends State<SearchScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const LoomBanner(),
-            const SearchBarWidget(),
+            SearchBarWidget(
+              controller: _searchController,
+              onChanged: (text) {
+                setState(() => _query = text);
+              },
+              onClear: () {
+                _searchController.clear();
+                setState(() => _query = '');
+                // Notificar a onChanged manualmente si hace falta
+              },
+            ),
             CategoryCarousel(
               categories: categories,
               onCategorySelected: (idx) {
@@ -206,9 +224,38 @@ class _SearchScreenState extends State<SearchScreen> {
                       final selectedCat = (_selectedCategoryIndex >= 0 && _selectedCategoryIndex < categories.length)
                         ? categories[_selectedCategoryIndex]
                         : 'General';
-                      final displayed = (selectedCat == 'General')
-                        ? books
-                        : books.where((b) => b.categorias.any((c) => c.nombre == selectedCat)).toList();
+                      bool matchesCategory(Book b) {
+                        if (selectedCat == 'General') return true;
+                        return b.categorias.any((c) => c.nombre.toLowerCase() == selectedCat.toLowerCase());
+                      }
+                      bool matchesQuery(Book b) {
+                        final q = _query.trim().toLowerCase();
+                        if (q.isEmpty) return true;
+                        if (b.titulo.toLowerCase().contains(q)) return true;
+                        if (b.autores.any((a) => a.nombre.toLowerCase().contains(q))) return true;
+                        if (b.categorias.any((c) => c.nombre.toLowerCase().contains(q))) return true;
+                        return false;
+                      }
+                      final displayed = books.where((b) => matchesCategory(b) && matchesQuery(b)).toList();
+                      if (displayed.isEmpty) {
+                        return Center(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Icon(Icons.search_off, size: 64, color: Colors.white70),
+                                const SizedBox(height: 12),
+                                Text(
+                                  'No se encontraron resultados para "${_query}"',
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(fontSize: 16, color: Colors.white70),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }
                       return GridView.builder(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 10,

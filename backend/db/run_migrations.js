@@ -93,6 +93,22 @@ async function runMigrations() {
     });
 
     console.log('\n🎉 ¡Migraciones completadas exitosamente!');
+    // Migración 003: Agregar id_uploader y eliminado a tbl_libros
+    console.log('\n📝 Migración 003: Agregando columnas id_uploader y eliminado a tbl_libros...');
+    try {
+      await sql`
+        ALTER TABLE public.tbl_libros
+        ADD COLUMN IF NOT EXISTS id_uploader BIGINT NULL REFERENCES public.tbl_usuarios(id_usuario) ON DELETE SET NULL,
+        ADD COLUMN IF NOT EXISTS eliminado BOOLEAN NOT NULL DEFAULT FALSE
+      `;
+      console.log('   ✅ Columnas agregadas');
+      await sql`
+        CREATE INDEX IF NOT EXISTS idx_libros_uploader ON public.tbl_libros(id_uploader)
+      `;
+      console.log('   ✅ Índice creado');
+    } catch (err) {
+      console.error('   ❌ Error migración 003:', err.message);
+    }
 
   } catch (error) {
     console.error('\n❌ Error ejecutando migraciones:', error);

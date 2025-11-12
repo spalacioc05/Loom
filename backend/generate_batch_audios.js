@@ -44,7 +44,9 @@ async function main(libroId, count = 5) {
       const audioBuffer = await generateAudio(seg.texto, voice.codigo_voz, voice.configuracion || {});
       const fileName = `libro_${libroId}/segmento_${seg.orden}.mp3`;
       
-      const { error: upErr } = await supabase.storage.from('audios_tts').upload(fileName, audioBuffer, { 
+  const safeVoice = (voice.codigo_voz || 'voz').replace(/[^a-zA-Z0-9_-]/g, '_');
+  const fileName = `libro_${libroId}/voz_${safeVoice}/segmento_${seg.orden}.mp3`;
+  const { error: upErr } = await supabase.storage.from('audios_tts').upload(fileName, audioBuffer, { 
         contentType: 'audio/mpeg', 
         upsert: true
       });

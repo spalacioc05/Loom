@@ -315,7 +315,9 @@ const getSegmentAudio = async (req, res) => {
 const saveProgress = async (req, res) => {
   try {
     const { document_id, voice_id, segment_id, intra_ms, global_offset_char } = req.body;
-    const usuario_id = req.user?.id || '00000000-0000-0000-0000-000000000000'; // TODO: usar auth real
+    // Intentar obtener id_usuario (BIGINT) desde cabecera 'x-user-id' para vincular progreso a biblioteca
+    const headerUser = req.headers['x-user-id'];
+    const userIdNum = headerUser ? Number(headerUser) : null;
 
     if (!document_id || !voice_id || segment_id == null || intra_ms == null) {
       return res.status(400).json({ 
@@ -333,8 +335,29 @@ const saveProgress = async (req, res) => {
          intra_ms = EXCLUDED.intra_ms,
          offset_global_char = EXCLUDED.offset_global_char,
          updated_at = NOW()`,
-      [usuario_id, document_id, voice_id, segment_id, intra_ms, global_offset_char]
+      [headerUser || '00000000-0000-0000-0000-000000000000', document_id, voice_id, segment_id, intra_ms, global_offset_char]
     );
+
+    // Si recibimos id_usuario válido y podemos resolver libro_id, actualizar biblioteca del usuario
+    if (userIdNum && Number.isFinite(userIdNum)) {
+      try {
+        const docRes = await pool.query('SELECT libro_id FROM tbl_documentos WHERE id = $1 LIMIT 1', [document_id]);
+        if (docRes.rows.length > 0) {
+          const libroId = docRes.rows[0].libro_id;
+          await pool.query(
+            `INSERT INTO tbl_libros_x_usuarios (id_usuario, id_libro, fecha_ultima_lectura, progreso, tiempo_escucha)
+             VALUES ($1, $2, NOW(), 1, 0)
+             ON CONFLICT (id_usuario, id_libro)
+             DO UPDATE SET 
+               fecha_ultima_lectura = NOW(),
+               progreso = GREATEST(tbl_libros_x_usuarios.progreso, 1)`,
+            [userIdNum, libroId]
+          );
+        }
+      } catch (e) {
+        console.warn('[Progreso] No se pudo actualizar biblioteca del usuario:', e.message);
+      }
+    }
 
     res.json({ success: true });
   } catch (error) {
@@ -652,8 +675,10 @@ const quickStartBook = async (req, res) => {
           voice.configuracion || {}
         );
 
-        // Subir a Supabase Storage
-        const fileName = `libro_${libroId}/segmento_${firstSegment.orden}.mp3`;
+  // Subir a Supabase Storage
+  // Importante: incluir la voz en la ruta para no sobreescribir entre voces
+  const safeVoice = (voice.codigo_voz || 'voz').replace(/[^a-zA-Z0-9_-]/g, '_');
+  const fileName = `libro_${libroId}/voz_${safeVoice}/segmento_${firstSegment.orden}.mp3`;
         const { error: uploadError } = await supabase.storage
           .from('audios_tts')
           .upload(fileName, audioBuffer, {
@@ -714,7 +739,8 @@ const quickStartBook = async (req, res) => {
           for (const seg of nextSegsResult.rows) {
             try {
               const audioBuffer = await generateAudio(seg.texto, voice.codigo_voz, voice.configuracion || {});
-              const fileName = `libro_${libroId}/segmento_${seg.orden}.mp3`;
+              const safeVoice = (voice.codigo_voz || 'voz').replace(/[^a-zA-Z0-9_-]/g, '_');
+              const fileName = `libro_${libroId}/voz_${safeVoice}/segmento_${seg.orden}.mp3`;
               
               await supabase.storage.from('audios_tts').upload(fileName, audioBuffer, {
                 contentType: 'audio/mpeg',

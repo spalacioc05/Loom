@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import '../services/api_service.dart';
 import '../models/book.dart';
+import '../auth/google_auth_service.dart';
 import 'dart:io';
 
 class UploadBookScreen extends StatefulWidget {
@@ -23,7 +24,7 @@ class _UploadBookScreenState extends State<UploadBookScreen> {
   bool _isUploading = false;
   
   // Categorías seleccionadas (múltiples) y lista de categorías disponibles
-  Set<String> _selectedCategoriasIds = {};
+  final Set<String> _selectedCategoriasIds = {};
   List<Category> _categorias = [];
   bool _loadingCategorias = true;
 
@@ -111,12 +112,19 @@ class _UploadBookScreenState extends State<UploadBookScreen> {
     });
 
     try {
+      // Obtener userId del backend para asociar libro a su biblioteca
+      String? userId;
+      try {
+        userId = await GoogleAuthService().getBackendUserId();
+      } catch (_) {}
+
       await ApiService.uploadBook(
         titulo: _tituloController.text,
         descripcion: _descripcionController.text,
         categoriasIds: _selectedCategoriasIds.toList(),
         pdfFile: _selectedFile!,
         coverFile: _selectedCover, // Puede ser null
+        userId: userId,
       );
 
       if (!mounted) return;

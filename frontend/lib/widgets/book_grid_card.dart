@@ -1,77 +1,30 @@
 import 'package:flutter/material.dart';
 import '../models/book.dart';
 import '../screens/book_player_screen.dart';
-import 'package:just_audio/just_audio.dart';
-import '../services/tts_service.dart';
-import '../models/voice.dart';
+import '../auth/google_auth_service.dart';
+import '../services/api_service.dart';
 
 /// Card de libro para grid collage estilo Pinterest.
 class BookGridCard extends StatefulWidget {
   final Book book;
-  const BookGridCard({super.key, required this.book});
+  final VoidCallback? onRemoved; // callback para refrescar lista tras "No leer"
+  final String? currentUserId; // id del usuario actual para verificar autoría
+  const BookGridCard({super.key, required this.book, this.onRemoved, this.currentUserId});
 
   @override
   State<BookGridCard> createState() => _BookGridCardState();
 }
 
 class _BookGridCardState extends State<BookGridCard> {
-  final AudioPlayer _inlinePlayer = AudioPlayer();
-  List<Voice> _voices = [];
-  Voice? _voice; // voz seleccionada para inline preview
-  bool _loadingVoice = true;
-  bool _generating = false;
-  bool _expanded = false; // para mostrar controles
+  bool _menuBusy = false;
+  bool _editing = false;
+  final TextEditingController _titleCtrl = TextEditingController();
+  final TextEditingController _descCtrl = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    _loadVoices();
-  }
-
-  Future<void> _loadVoices() async {
-    try {
-      _voices = await TtsService.instance.getVoices();
-      _voice = _voices.isNotEmpty ? _voices.first : null;
-    } catch (_) {}
-    if (mounted) setState(() => _loadingVoice = false);
-  }
-
-  Future<void> _playPause() async {
-    if (_voice == null || _generating) return;
-    if (_inlinePlayer.playing) {
-      await _inlinePlayer.pause();
-      setState(() {});
-      return;
-    }
-    if (_inlinePlayer.audioSource == null) {
-      // Obtener playlist y primer segmento
-      setState(() => _generating = true);
-      try {
-        final playlist = await TtsService.instance.getPlaylist(
-          documentId: widget.book.id,
-          voiceId: _voice!.id,
-          fromOffsetChar: null,
-        );
-        if (playlist.items.isEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('No hay segmentos listos todavía.')),
-          );
-        } else {
-          final first = playlist.items.first;
-          await _inlinePlayer.setUrl(first.url.toString());
-          await _inlinePlayer.play();
-        }
-      } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al reproducir: $e')),
-        );
-      } finally {
-        if (mounted) setState(() => _generating = false);
-      }
-    } else {
-      await _inlinePlayer.play();
-      setState(() {});
-    }
+    // No inline voices/playback in this card anymore
   }
 
   void _openFullPlayer() {
@@ -82,10 +35,125 @@ class _BookGridCardState extends State<BookGridCard> {
     );
   }
 
-  @override
-  void dispose() {
-    _inlinePlayer.dispose();
-    super.dispose();
+  Future<void> _removeFromLibrary() async {
+    if (_menuBusy) return;
+    setState(() => _menuBusy = true);
+    try {
+      final userId = await GoogleAuthService().getBackendUserId();
+      if (userId == null) throw Exception('Usuario no autenticado');
+      await ApiService.removeBookFromLibrary(userId, widget.book.intId);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Libro removido de tu biblioteca')),
+      );
+      widget.onRemoved?.call();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudo remover: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _menuBusy = false);
+    }
+  }
+
+  Future<void> _deleteBook() async {
+    if (_menuBusy) return;
+    setState(() => _menuBusy = true);
+    try {
+      final userId = await GoogleAuthService().getBackendUserId();
+      if (userId == null) throw Exception('Usuario no autenticado');
+      await ApiService.deleteBook(userId: userId, bookId: widget.book.intId);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Libro eliminado')));
+      widget.onRemoved?.call();
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+    } finally {
+      if (mounted) setState(() => _menuBusy = false);
+    }
+  }
+
+  Future<void> _editBook() async {
+    if (_editing) return;
+    final userId = await GoogleAuthService().getBackendUserId();
+    if (userId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No autenticado')));
+      return;
+    }
+    _titleCtrl.text = widget.book.titulo;
+    _descCtrl.text = widget.book.descripcion ?? '';
+    setState(() => _editing = true);
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(ctx).viewInsets.bottom,
+            left: 16,
+            right: 16,
+            top: 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Editar libro', style: Theme.of(ctx).textTheme.titleMedium),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _titleCtrl,
+                decoration: const InputDecoration(labelText: 'Título'),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _descCtrl,
+                maxLines: 3,
+                decoration: const InputDecoration(labelText: 'Descripción'),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('Cancelar'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () async {
+                        try {
+                          await ApiService.updateBook(
+                            userId: userId,
+                            bookId: widget.book.intId,
+                            titulo: _titleCtrl.text.trim().isEmpty ? null : _titleCtrl.text.trim(),
+                            descripcion: _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
+                          );
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Actualizado')));
+                            widget.onRemoved?.call(); // refresh list to get updated data
+                          }
+                        } catch (e) {
+                          if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+                        } finally {
+                          if (mounted) setState(() => _editing = false);
+                          Navigator.pop(ctx);
+                        }
+                      },
+                      child: const Text('Guardar'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+            ],
+          ),
+        );
+      },
+    ).whenComplete(() {
+      if (mounted) setState(() => _editing = false);
+    });
   }
 
   @override
@@ -99,7 +167,6 @@ class _BookGridCardState extends State<BookGridCard> {
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
         onTap: _openFullPlayer,
-        onLongPress: () => setState(() => _expanded = !_expanded),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -153,52 +220,56 @@ class _BookGridCardState extends State<BookGridCard> {
                   const SizedBox(height: 6),
                   Row(
                     children: [
-                      // Botón Play/Pause inline
+                      const Spacer(),
                       IconButton(
-                        iconSize: 28,
-                        tooltip: 'Escuchar rápido',
-                        icon: _generating
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : Icon(
-                                _inlinePlayer.playing ? Icons.pause_circle_filled : Icons.play_circle_fill,
-                                color: Theme.of(context).colorScheme.primary,
-                              ),
-                        onPressed: _generating ? null : _playPause,
-                      ),
-                      if (_expanded && !_loadingVoice)
-                        Expanded(
-                          child: DropdownButton<Voice>(
-                            value: _voice,
-                            isExpanded: true,
-                            items: _voices.map((v) {
-                              return DropdownMenuItem(
-                                value: v,
-                                child: Text(
-                                  v.voiceCode.split('-').last,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              );
-                            }).toList(),
-                            onChanged: (v) => setState(() => _voice = v),
-                          ),
-                        )
-                      else if (_expanded && _loadingVoice)
-                        const Padding(
-                          padding: EdgeInsets.only(left: 8.0),
-                          child: SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        ),
-                      IconButton(
-                        tooltip: 'Abrir reproductor',
+                        tooltip: 'Abrir',
                         icon: const Icon(Icons.open_in_full),
                         onPressed: _openFullPlayer,
+                      ),
+                      PopupMenuButton<String>(
+                        onSelected: (value) {
+                          if (value == 'no_leer') {
+                            _removeFromLibrary();
+                          } else if (value == 'editar') {
+                            _editBook();
+                          } else if (value == 'eliminar') {
+                            _deleteBook();
+                          }
+                        },
+                        itemBuilder: (context) => [
+                          PopupMenuItem<String>(
+                            value: 'no_leer',
+                            child: Row(
+                              children: const [
+                                Icon(Icons.do_not_disturb, size: 18),
+                                SizedBox(width: 8),
+                                Text('No leer'),
+                              ],
+                            ),
+                          ),
+                          if (widget.book.uploaderId != null && widget.currentUserId != null && widget.book.uploaderId == widget.currentUserId)
+                            PopupMenuItem<String>(
+                              value: 'editar',
+                              child: Row(
+                                children: const [
+                                  Icon(Icons.edit, size: 18),
+                                  SizedBox(width: 8),
+                                  Text('Editar'),
+                                ],
+                              ),
+                            ),
+                          if (widget.book.uploaderId != null && widget.currentUserId != null && widget.book.uploaderId == widget.currentUserId)
+                            PopupMenuItem<String>(
+                              value: 'eliminar',
+                              child: Row(
+                                children: const [
+                                  Icon(Icons.delete_forever, size: 18),
+                                  SizedBox(width: 8),
+                                  Text('Eliminar'),
+                                ],
+                              ),
+                            ),
+                        ],
                       ),
                     ],
                   ),

@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/playlist.dart';
 import '../models/play_progress.dart';
 import '../models/voice.dart';
+import '../auth/google_auth_service.dart';
 
 /// Servicio de TTS (por ahora mock para UI) y persistencia de progreso local.
 class TtsService {
@@ -170,9 +171,20 @@ class TtsService {
         'intra_ms': progress.intraMs,
         'global_offset_char': progress.globalOffsetChar,
       };
-      final resp = await http.post(uri,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(body)).timeout(const Duration(seconds: 8));
+      // Adjuntar id_usuario del backend para asociar progreso a biblioteca
+      String? backendUserId;
+      try {
+        backendUserId = await GoogleAuthService().getBackendUserId();
+      } catch (_) {}
+      final headers = <String, String>{'Content-Type': 'application/json'};
+      if (backendUserId != null) headers['x-user-id'] = backendUserId;
+      final resp = await http
+          .post(
+            uri,
+            headers: headers,
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 8));
       if (resp.statusCode != 200 && resp.statusCode != 201) {
         // Ignorar fallos del backend, ya está guardado localmente
         // print('Advertencia: saveProgress backend responded ${resp.statusCode}');

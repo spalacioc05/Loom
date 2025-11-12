@@ -19,6 +19,7 @@ export async function getAllBooks(req, res) {
 				l.archivo,
 				l.paginas,
 				l.palabras,
+				l.id_uploader as uploader_id,
 				COALESCE(
 					json_agg(
 						DISTINCT jsonb_build_object('id', a.id_autor, 'nombre', a.nombre)
@@ -44,7 +45,8 @@ export async function getAllBooks(req, res) {
 			LEFT JOIN tbl_generos g ON lg.id_genero = g.id_genero
 			LEFT JOIN tbl_libros_x_categorias lc ON l.id_libro = lc.id_libro
 			LEFT JOIN tbl_categorias c ON lc.id_categoria = c.id_categoria
-			GROUP BY l.id_libro, l.titulo, l.descripcion, l.fecha_publicacion, l.portada, l.archivo, l.paginas, l.palabras
+			WHERE COALESCE(l.eliminado, false) = false
+			GROUP BY l.id_libro, l.titulo, l.descripcion, l.fecha_publicacion, l.portada, l.archivo, l.paginas, l.palabras, l.id_uploader
 			ORDER BY l.id_libro DESC
 		`;
 		res.json(books);
@@ -91,6 +93,8 @@ export async function getUserLibrary(req, res) {
 				l.archivo,
 				l.paginas,
 				l.palabras,
+				l.id_uploader as uploader_id,
+				x.progreso as progreso,
 				x.fecha_ultima_lectura,
 				COALESCE(
 					json_agg(
@@ -118,8 +122,8 @@ export async function getUserLibrary(req, res) {
 			LEFT JOIN tbl_generos g ON lg.id_genero = g.id_genero
 			LEFT JOIN tbl_libros_x_categorias lc ON l.id_libro = lc.id_libro
 			LEFT JOIN tbl_categorias c ON lc.id_categoria = c.id_categoria
-			WHERE x.id_usuario = ${userId}::bigint
-			GROUP BY l.id_libro, l.titulo, l.descripcion, l.fecha_publicacion, l.portada, l.archivo, l.paginas, l.palabras, x.fecha_ultima_lectura
+			WHERE x.id_usuario = ${userId}::bigint AND COALESCE(l.eliminado, false) = false
+			GROUP BY l.id_libro, l.titulo, l.descripcion, l.fecha_publicacion, l.portada, l.archivo, l.paginas, l.palabras, l.id_uploader, x.progreso, x.fecha_ultima_lectura
 			ORDER BY x.fecha_ultima_lectura DESC NULLS LAST, l.id_libro DESC
 		`;
 		
@@ -198,6 +202,57 @@ export async function removeFromUserLibrary(req, res) {
 	}
 }
 
+// Editar un libro (solo autor/uploader)
+export async function updateBook(req, res) {
+	try {
+		const { id } = req.params;
+		const { userId, titulo, descripcion } = req.body || {};
+		if (!id) return res.status(400).json({ error: 'id es requerido' });
+		if (!userId) return res.status(400).json({ error: 'userId es requerido' });
+
+		const rows = await sql`SELECT id_libro, id_uploader FROM tbl_libros WHERE id_libro = ${id}::bigint LIMIT 1`;
+		if (rows.length === 0) return res.status(404).json({ error: 'Libro no encontrado' });
+		const book = rows[0];
+		if (String(book.id_uploader || '') !== String(userId)) {
+			return res.status(403).json({ error: 'No autorizado: solo el autor puede editar' });
+		}
+		await sql`
+			UPDATE tbl_libros SET 
+				titulo = COALESCE(${titulo}, titulo),
+				descripcion = COALESCE(${descripcion}, descripcion)
+			WHERE id_libro = ${id}::bigint
+		`;
+		return res.json({ message: 'Libro actualizado' });
+	} catch (err) {
+		console.error('Error updateBook:', err.message);
+		return res.status(500).json({ error: 'Error actualizando libro', detail: err.message });
+	}
+}
+
+// Eliminar (soft-delete) un libro (solo autor/uploader)
+export async function deleteBook(req, res) {
+	try {
+		const { id } = req.params;
+		const { userId } = req.body || {};
+		const headerUser = req.headers['x-user-id'];
+		const uid = userId || headerUser;
+		if (!id) return res.status(400).json({ error: 'id es requerido' });
+		if (!uid) return res.status(400).json({ error: 'userId requerido' });
+
+		const rows = await sql`SELECT id_libro, id_uploader FROM tbl_libros WHERE id_libro = ${id}::bigint LIMIT 1`;
+		if (rows.length === 0) return res.status(404).json({ error: 'Libro no encontrado' });
+		const book = rows[0];
+		if (String(book.id_uploader || '') !== String(uid)) {
+			return res.status(403).json({ error: 'No autorizado: solo el autor puede eliminar' });
+		}
+		await sql`UPDATE tbl_libros SET eliminado = TRUE WHERE id_libro = ${id}::bigint`;
+		return res.json({ message: 'Libro eliminado' });
+	} catch (err) {
+		console.error('Error deleteBook:', err.message);
+		return res.status(500).json({ error: 'Error eliminando libro', detail: err.message });
+	}
+}
+
 // Subir un nuevo libro con PDF
 export async function uploadBook(req, res) {
 	try {
@@ -208,7 +263,10 @@ export async function uploadBook(req, res) {
 		console.log('Body:', req.body);
 		console.log('Files:', req.files);
 		
-		const { titulo, descripcion, categoria } = req.body;
+	const { titulo, descripcion, categoria } = req.body;
+	// Identificador del usuario que sube el libro (opcional pero recomendado)
+	// Acepta 'userId' o 'id_usuario' como alias y también cabecera 'x-user-id'
+	const rawUserId = req.body.userId || req.body.id_usuario || req.headers['x-user-id'];
 		const pdfFile = req.files?.pdf?.[0];
 		const portadaFile = req.files?.portada?.[0];
 
@@ -380,7 +438,7 @@ export async function uploadBook(req, res) {
 
 		// Insertar libro en la base de datos con todos los campos automáticos
 		console.log('Insertando libro en la base de datos...');
-		const result = await sql`
+	    const result = await sql`
 			INSERT INTO tbl_libros (
 				titulo, 
 				descripcion, 
@@ -388,7 +446,8 @@ export async function uploadBook(req, res) {
 				archivo,
 				portada,
 				paginas,
-				palabras
+					palabras,
+					id_uploader
 			)
 			VALUES (
 				${titulo}, 
@@ -396,8 +455,9 @@ export async function uploadBook(req, res) {
 				${fechaActual}, 
 				${archivoUrl},
 				${portadaUrl},
-				${numPaginas},
-				${numPalabras}
+					${numPaginas},
+					${numPalabras},
+					${rawUserId ? String(rawUserId).trim() : null}::bigint
 			)
 			RETURNING *
 		`;
@@ -424,6 +484,29 @@ export async function uploadBook(req, res) {
 			console.warn('⚠️ No se pudo lanzar segmentación en background:', e.message);
 		}
 
+		// Si tenemos userId, agregar a la biblioteca del usuario automáticamente
+		if (rawUserId) {
+			try {
+				// Forzar string y quitar espacios
+				const userIdStr = String(rawUserId).trim();
+				// Validación básica: numérico
+				if (/^\d+$/.test(userIdStr)) {
+					await sql`
+						INSERT INTO tbl_libros_x_usuarios (id_usuario, id_libro, fecha_ultima_lectura, progreso, tiempo_escucha)
+						VALUES (${userIdStr}::bigint, ${newBook.id_libro}::bigint, NOW(), 0.0, 0)
+						ON CONFLICT (id_usuario, id_libro) DO NOTHING
+					`;
+					console.log(`📚 Libro ${newBook.id_libro} agregado a biblioteca de usuario ${userIdStr}`);
+				} else {
+					console.warn('⚠️ userId inválido, debe ser numérico. Recibido:', rawUserId);
+				}
+			} catch (e) {
+				console.warn('⚠️ No se pudo agregar el libro a la biblioteca automáticamente:', e.message);
+			}
+		} else {
+			console.log('ℹ️ No se envió userId; omitiendo auto-agregar a biblioteca.');
+		}
+
 		res.status(201).json({
 			message: 'Libro subido exitosamente',
 			book: {
@@ -433,8 +516,10 @@ export async function uploadBook(req, res) {
 				fecha_publicacion: newBook.fecha_publicacion,
 				archivo: newBook.archivo,
 				paginas: newBook.paginas,
-				palabras: newBook.palabras
-			}
+				palabras: newBook.palabras,
+				uploader_id: newBook.id_uploader
+			},
+			addedToLibrary: Boolean(rawUserId)
 		});
 
 	} catch (error) {

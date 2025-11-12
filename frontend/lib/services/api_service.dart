@@ -230,6 +230,7 @@ class ApiService {
     required List<String> categoriasIds,
     required File pdfFile,
     File? coverFile,
+    String? userId,
   }) async {
     try {
       print('=== INICIANDO UPLOAD ===');
@@ -237,7 +238,7 @@ class ApiService {
       print('URL: $baseUrl/libros');
       print('Título: $titulo');
       
-      var request = http.MultipartRequest('POST', Uri.parse('$baseUrl/libros'));
+  var request = http.MultipartRequest('POST', Uri.parse('$baseUrl/libros'));
       
       // Agregar campos de texto
       request.fields['titulo'] = titulo;
@@ -246,6 +247,9 @@ class ApiService {
       }
       // Enviar categorías como JSON array de IDs
       request.fields['categoria'] = json.encode(categoriasIds);
+      if (userId != null && userId.isNotEmpty) {
+        request.fields['userId'] = userId; // backend acepta userId
+      }
 
       // Agregar archivo PDF
       var pdfBytes = await pdfFile.readAsBytes();
@@ -297,6 +301,39 @@ class ApiService {
     } catch (e) {
       print('❌ Error en uploadBook: $e');
       rethrow;
+    }
+  }
+
+  /// Elimina (soft-delete) un libro si el usuario es el autor/uploader
+  static Future<void> deleteBook({required String userId, required int bookId}) async {
+    final baseUrl = await resolveBaseUrl();
+    final uri = Uri.parse('$baseUrl/libros/$bookId');
+    final response = await http.delete(
+      uri,
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode({'userId': userId}),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('No se pudo eliminar el libro (${response.statusCode}): ${response.body}');
+    }
+  }
+
+  /// Edita título/descripcion de un libro (solo autor/uploader)
+  static Future<void> updateBook({
+    required String userId,
+    required int bookId,
+    String? titulo,
+    String? descripcion,
+  }) async {
+    final baseUrl = await resolveBaseUrl();
+    final uri = Uri.parse('$baseUrl/libros/$bookId');
+    final response = await http.put(
+      uri,
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode({'userId': userId, 'titulo': titulo, 'descripcion': descripcion}),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('No se pudo actualizar el libro (${response.statusCode}): ${response.body}');
     }
   }
 

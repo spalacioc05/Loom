@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 
 /// Widget para mostrar un buscador en la parte superior.
 class SearchBarWidget extends StatelessWidget {
-  const SearchBarWidget({super.key});
+  final ValueChanged<String>? onChanged;
+  final VoidCallback? onClear;
+  final TextEditingController? controller;
+  const SearchBarWidget({super.key, this.onChanged, this.onClear, this.controller});
 
   @override
   Widget build(BuildContext context) {
@@ -17,6 +20,8 @@ class SearchBarWidget extends StatelessWidget {
               color: Colors.black,
               fontWeight: FontWeight.w500,
             ),
+            controller: controller,
+            onChanged: onChanged,
             decoration: InputDecoration(
               hintText: 'Buscar por título, autor o categoría...',
               hintStyle: const TextStyle(
@@ -24,6 +29,11 @@ class SearchBarWidget extends StatelessWidget {
                 fontWeight: FontWeight.w400,
               ),
               prefixIcon: const Icon(Icons.search, color: Colors.black54),
+              suffixIcon: onClear != null ? IconButton(
+                icon: const Icon(Icons.close, color: Colors.black54),
+                onPressed: onClear,
+                tooltip: 'Limpiar',
+              ) : null,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(30),
                 borderSide: BorderSide.none,

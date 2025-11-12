@@ -7,6 +7,7 @@ import '../models/book.dart';
 import '../services/api_service.dart';
 import '../widgets/book_grid_card.dart';
 import 'upload_book_screen.dart';
+import '../widgets/category_carousel.dart';
 
 /// Pantalla que muestra la lista de libros.
 
@@ -22,6 +23,7 @@ class _BooksScreenState extends State<BooksScreen> {
   late int _selectedIndex;
   Future<List<Book>>? _booksFuture;
   String? _userId;
+  int _libraryFilter = 0; // 0 todos, 1 subidos por mi, 2 en progreso
 
   @override
   void initState() {
@@ -81,6 +83,14 @@ class _BooksScreenState extends State<BooksScreen> {
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
             ),
           ),
+          // Barra de filtros tipo categorías
+          CategoryCarousel(
+            categories: const ['Todos', 'Mis subidos', 'En progreso'],
+            selectedIndex: _libraryFilter,
+            onCategorySelected: (i) {
+              setState(() => _libraryFilter = i);
+            },
+          ),
           Expanded(
             child: _booksFuture == null
                 ? const Center(child: CircularProgressIndicator())
@@ -124,6 +134,12 @@ class _BooksScreenState extends State<BooksScreen> {
                             ),
                           );
                         }
+                        List<Book> filtered = books;
+                        if (_libraryFilter == 1 && _userId != null) {
+                          filtered = books.where((b) => b.uploaderId == _userId).toList();
+                        } else if (_libraryFilter == 2) {
+                          filtered = books.where((b) => (b.progreso ?? 0) > 0).toList();
+                        }
                         return GridView.builder(
                           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                           gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
@@ -132,8 +148,12 @@ class _BooksScreenState extends State<BooksScreen> {
                             crossAxisSpacing: 12,
                             childAspectRatio: 0.75,
                           ),
-                          itemCount: books.length,
-                          itemBuilder: (context, index) => BookGridCard(book: books[index]),
+                          itemCount: filtered.length,
+                          itemBuilder: (context, index) => BookGridCard(
+                            book: filtered[index],
+                            onRemoved: _refreshBooks,
+                            currentUserId: _userId,
+                          ),
                         );
                       }
                       return const Center(child: Text('Sin datos'));
@@ -226,6 +246,8 @@ class _BooksScreenState extends State<BooksScreen> {
           }
         },
       ),
+      // Quitamos ToggleButtons en footer; ahora se muestra CategoryCarousel arriba
+      persistentFooterButtons: null,
     );
   }
 }

@@ -5,6 +5,8 @@ import {
   getUserLibrary, 
   addToUserLibrary, 
   removeFromUserLibrary,
+  updateBook,
+  deleteBook,
   getCategories
 } from '../controllers/books_controllers.js';
 import { ensureUser, getUserByFirebase } from '../controllers/user_controllers.js';
@@ -66,6 +68,10 @@ router.post('/libros', upload.fields([
 	{ name: 'pdf', maxCount: 1 },
 	{ name: 'portada', maxCount: 1 }
 ]), uploadBook);
+
+// Editar y eliminar libro (solo autor/uploader)
+router.put('/libros/:id', updateBook);
+router.delete('/libros/:id', deleteBook);
 
 // === Endpoints TTS ===
 // Obtener lista de voces disponibles

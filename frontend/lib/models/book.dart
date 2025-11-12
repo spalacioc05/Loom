@@ -8,6 +8,8 @@ class Book {
   final String? archivo;
   final int? paginas;
   final int? palabras;
+  final String? uploaderId; // id del usuario que subió el libro
+  final double? progreso; // progreso del usuario en su biblioteca (0-100)
   final List<Author> autores;
   final List<Genre> generos;
   final List<Category> categorias;
@@ -21,6 +23,8 @@ class Book {
     this.archivo,
     this.paginas,
     this.palabras,
+    this.uploaderId,
+    this.progreso,
   this.autores = const [],
   this.generos = const [],
   this.categorias = const [],
@@ -42,6 +46,12 @@ class Book {
       archivo: json['archivo'],
       paginas: json['paginas'],
       palabras: json['palabras'],
+      uploaderId: json['uploader_id']?.toString(),
+      progreso: json['progreso'] != null 
+        ? (json['progreso'] is num 
+            ? (json['progreso'] as num).toDouble() 
+            : double.tryParse(json['progreso'].toString()))
+        : null,
       autores: json['autores'] != null 
         ? (json['autores'] as List).map((a) => Author.fromJson(a)).toList()
         : [],

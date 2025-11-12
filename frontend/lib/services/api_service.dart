@@ -22,7 +22,7 @@ class ApiService {
 
     final candidates = <String>[
       // Tu IP local PRIMERO (para dispositivo físico)
-      'http://192.168.1.1:3000',
+      'http://192.168.1.6:3000',
       // Emulador Android
       'http://10.0.2.2:3000',
       // Fallbacks
@@ -40,9 +40,9 @@ class ApiService {
       }
     }
 
-    // Si nada funcionó, usar IP local por defecto
-    print('⚠️ No se pudo probar ninguna URL, usando IP local por defecto');
-    _cachedBaseUrl = 'http://192.168.1.1:3000';
+  // Si nada funcionó, usar IP local por defecto
+  print('⚠️ No se pudo probar ninguna URL, usando IP local por defecto');
+  _cachedBaseUrl = 'http://192.168.1.6:3000';
     return _cachedBaseUrl!;
   }
 
@@ -227,6 +227,7 @@ class ApiService {
   static Future<void> uploadBook({
     required String titulo,
     String? descripcion,
+    required List<String> categoriasIds,
     required File pdfFile,
     File? coverFile,
   }) async {
@@ -243,6 +244,8 @@ class ApiService {
       if (descripcion != null && descripcion.isNotEmpty) {
         request.fields['descripcion'] = descripcion;
       }
+      // Enviar categorías como JSON array de IDs
+      request.fields['categoria'] = json.encode(categoriasIds);
 
       // Agregar archivo PDF
       var pdfBytes = await pdfFile.readAsBytes();
@@ -294,6 +297,27 @@ class ApiService {
     } catch (e) {
       print('❌ Error en uploadBook: $e');
       rethrow;
+    }
+  }
+
+  /// Obtener las categorías disponibles desde el backend
+  static Future<List<Category>> fetchCategories() async {
+    try {
+      final baseUrl = await resolveBaseUrl();
+      print('📂 Cargando categorías desde: $baseUrl/categorias');
+      final response = await http.get(Uri.parse('$baseUrl/categorias'));
+      
+      if (response.statusCode == 200) {
+        final List<dynamic> data = json.decode(response.body);
+        print('   Categorías recibidas: ${data.length}');
+        return data.map((item) => Category.fromJson(item)).toList();
+      } else {
+        print('⚠️ Error al cargar categorías, usando fallback');
+        return [Category(id: '1', nombre: 'General')];
+      }
+    } catch (e) {
+      print('❌ Excepción en fetchCategories: $e');
+      return [Category(id: '1', nombre: 'General')]; // Fallback seguro
     }
   }
 }

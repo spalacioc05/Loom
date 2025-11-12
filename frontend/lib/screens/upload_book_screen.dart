@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import '../services/api_service.dart';
+import '../models/book.dart';
 import 'dart:io';
 
 class UploadBookScreen extends StatefulWidget {
@@ -20,6 +21,32 @@ class _UploadBookScreenState extends State<UploadBookScreen> {
   File? _selectedCover;
   String? _coverFileName;
   bool _isUploading = false;
+  
+  // Categorías seleccionadas (múltiples) y lista de categorías disponibles
+  Set<String> _selectedCategoriasIds = {};
+  List<Category> _categorias = [];
+  bool _loadingCategorias = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCategories();
+  }
+
+  Future<void> _loadCategories() async {
+    try {
+      final categorias = await ApiService.fetchCategories();
+      setState(() {
+        _categorias = categorias;
+        _loadingCategorias = false;
+      });
+    } catch (e) {
+      setState(() {
+        _categorias = [Category(id: '1', nombre: 'General')];
+        _loadingCategorias = false;
+      });
+    }
+  }
 
   Future<void> _pickPDF() async {
     try {
@@ -72,6 +99,13 @@ class _UploadBookScreenState extends State<UploadBookScreen> {
       return;
     }
 
+    if (_selectedCategoriasIds.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Por favor selecciona al menos una categoría')),
+      );
+      return;
+    }
+
     setState(() {
       _isUploading = true;
     });
@@ -80,6 +114,7 @@ class _UploadBookScreenState extends State<UploadBookScreen> {
       await ApiService.uploadBook(
         titulo: _tituloController.text,
         descripcion: _descripcionController.text,
+        categoriasIds: _selectedCategoriasIds.toList(),
         pdfFile: _selectedFile!,
         coverFile: _selectedCover, // Puede ser null
       );
@@ -167,6 +202,57 @@ class _UploadBookScreenState extends State<UploadBookScreen> {
                 ),
                 maxLines: 4,
               ),
+              const SizedBox(height: 24),
+
+              // Selector múltiple de categorías (chips en carousel horizontal)
+              _loadingCategorias
+                  ? const Center(child: CircularProgressIndicator())
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('Categorías *', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                            if (_selectedCategoriasIds.isNotEmpty)
+                              Text('${_selectedCategoriasIds.length} seleccionadas', style: TextStyle(color: Theme.of(context).colorScheme.primary)),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          height: 50,
+                          child: ListView.separated(
+                            scrollDirection: Axis.horizontal,
+                            itemCount: _categorias.length,
+                            separatorBuilder: (_, __) => const SizedBox(width: 8),
+                            itemBuilder: (context, index) {
+                              final cat = _categorias[index];
+                              final selected = _selectedCategoriasIds.contains(cat.id);
+                              return FilterChip(
+                                label: Text(cat.nombre),
+                                selected: selected,
+                                onSelected: (value) {
+                                  setState(() {
+                                    if (value) {
+                                      _selectedCategoriasIds.add(cat.id);
+                                    } else {
+                                      _selectedCategoriasIds.remove(cat.id);
+                                    }
+                                  });
+                                },
+                                selectedColor: Theme.of(context).colorScheme.primary.withOpacity(0.2),
+                                checkmarkColor: Theme.of(context).colorScheme.primary,
+                              );
+                            },
+                          ),
+                        ),
+                        if (_selectedCategoriasIds.isEmpty)
+                          const Padding(
+                            padding: EdgeInsets.only(top: 6),
+                            child: Text('Selecciona al menos una categoría', style: TextStyle(color: Colors.redAccent, fontSize: 12)),
+                          ),
+                      ],
+                    ),
               const SizedBox(height: 24),
 
               // Selector de PDF

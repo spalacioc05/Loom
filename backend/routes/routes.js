@@ -4,7 +4,8 @@ import {
   uploadBook, 
   getUserLibrary, 
   addToUserLibrary, 
-  removeFromUserLibrary 
+  removeFromUserLibrary,
+  getCategories
 } from '../controllers/books_controllers.js';
 import { ensureUser, getUserByFirebase } from '../controllers/user_controllers.js';
 import { 
@@ -13,7 +14,8 @@ import {
   getSegmentAudio, 
   saveProgress, 
   getProgress,
-  getBookAudios
+  getBookAudios,
+  quickStartBook
 } from '../controllers/tts_controllers.js';
 import multer from 'multer';
 import { healthCheck } from '../controllers/health_controller.js';
@@ -30,6 +32,9 @@ const upload = multer({
 });
 
 router.get('/disponibles', getAllBooks);
+
+// Obtener categorías disponibles
+router.get('/categorias', getCategories);
 
 // Biblioteca de usuario
 router.get('/biblioteca/:userId', getUserLibrary);
@@ -65,6 +70,9 @@ router.post('/libros', upload.fields([
 // === Endpoints TTS ===
 // Obtener lista de voces disponibles
 router.get('/voices', getVoices);
+
+// Quick-start: Genera y devuelve el primer audio inmediatamente
+router.post('/tts/libro/:libroId/quick-start', quickStartBook);
 
 // Generar playlist de segmentos
 router.post('/tts/playlist', getPlaylist);

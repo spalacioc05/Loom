@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:rxdart/rxdart.dart';
+import 'dart:async';
 import '../models/book.dart';
 import '../models/voice.dart';
 import '../services/tts_service.dart';
@@ -26,6 +27,7 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
   List<PlaylistItem> _playlist = [];
   int _currentIndex = 0;
   bool _loadingSegment = false;
+  Timer? _autosaveTimer;
 
   @override
   void initState() {
@@ -53,6 +55,21 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
         _playNext();
       }
     });
+
+    // Auto-save while playing: cuando empieza a reproducir, iniciar timer; cuando se pausa, guardar y cancelar
+    _player.playingStream.listen((playing) {
+      if (playing) {
+        // iniciar timer si no existe
+        _autosaveTimer ??= Timer.periodic(const Duration(seconds: 15), (_) {
+          _saveProgress();
+        });
+      } else {
+        // cancelar timer y guardar inmediatamente
+        _autosaveTimer?.cancel();
+        _autosaveTimer = null;
+        _saveProgress();
+      }
+    });
   }
 
   @override
@@ -65,27 +82,92 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
     if (_player.playing) {
       await _player.pause();
     } else {
-      // Si aún no tenemos playlist ni audio cargado, obtén del backend y reproduce
+      // Si aún no tenemos playlist, usar quick-start para obtener el primer audio inmediatamente
       if (_playlist.isEmpty) {
-        await _ensurePlaylistLoaded();
-      }
-      // Reproducir tan pronto tengamos al menos 1 audio
-      if (_playlist.isNotEmpty && !_loadingSegment) {
-        await _loadAndPlay(_currentIndex);
-        // Continuar cargando más audios en background
-        _schedulePlaylistRefresh();
+        setState(() => _loadingSegment = true);
+        try {
+          // Quick-start: genera y espera el primer audio
+          final firstAudioUrl = await TtsService.instance.quickStartBook(
+            widget.book.intId,
+            _currentVoice!.id,
+          );
+          
+          // Crear playlist con el primer audio
+          _playlist = [
+            PlaylistItem(
+              segmentId: 0,
+              url: Uri.parse(firstAudioUrl),
+              durationMs: null,
+            ),
+          ];
+          _currentIndex = 0;
+          
+          // Reproducir inmediatamente
+          await _loadAndPlay(0);
+          
+          // Cargar el resto de la playlist en background
+          _ensurePlaylistLoaded();
+          
+        } catch (e) {
+          print('Error en quick-start: $e');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Error cargando audio: $e')),
+            );
+          }
+        } finally {
+          setState(() => _loadingSegment = false);
+        }
+      } else {
+        // Ya tenemos playlist, solo reproducir
+        if (!_loadingSegment) {
+          await _loadAndPlay(_currentIndex);
+          // Continuar cargando más audios en background
+          _schedulePlaylistRefresh();
+        }
       }
     }
-    setState(() {});
+    // No necesitamos setState aquí, StreamBuilder se encarga
   }
 
-  void _seekRelative(Duration delta) async {
+  Future<void> _seekRelative(Duration delta) async {
     final pos = _player.position;
     final target = pos + delta;
-    final duration = _player.duration ?? const Duration(minutes: 1);
-    await _player.seek(target < Duration.zero
-        ? Duration.zero
-        : (target > duration ? duration : target));
+    final total = _player.duration; // puede ser null si el stream aún no conoce la duración
+    Duration seekTo;
+    if (total != null) {
+      // Limitar entre 0 y total cuando conocemos la duración real
+      if (target < Duration.zero) {
+        seekTo = Duration.zero;
+      } else if (target > total) {
+        seekTo = total;
+      } else {
+        seekTo = target;
+      }
+    } else {
+      // Si no conocemos la duración, solo evitamos negativos y dejamos que el backend/decoder recorte el exceso
+      seekTo = target < Duration.zero ? Duration.zero : target;
+    }
+    await _player.seek(seekTo);
+  }
+
+  Future<void> _onBackPressed() async {
+    try {
+      final pos = _player.position;
+      // Si estamos cerca del inicio del segmento (ej. <3 segundos), ir al segmento anterior
+      if (pos.inSeconds <= 3) {
+        if (_currentIndex > 0) {
+          await _loadAndPlay(_currentIndex - 1);
+        } else {
+          await _player.seek(Duration.zero);
+        }
+      } else {
+        // De lo contrario, retroceder 20s
+        await _seekRelative(const Duration(seconds: -20));
+      }
+    } catch (e) {
+      print('Error handling back press: $e');
+    }
   }
 
   void _changeSpeed(double newSpeed) async {
@@ -121,10 +203,12 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
     if (_currentVoice == null || _loadingSegment) return;
     setState(() => _loadingSegment = true);
     try {
-      // Cargar todos los audios del libro (genera primeros 5 automáticamente)
+      // Cargar todos los audios del libro con la voz seleccionada
+      // autoGenerate: 10 para que genere los primeros segmentos inmediatamente
       final audioUrls = await TtsService.instance.getBookAudios(
         widget.book.intId,
-        autoGenerate: 5, // Genera los primeros 5 si no existen
+        autoGenerate: 10,
+        voiceId: _currentVoice!.id, // Pasar la voz seleccionada
       );
       
       // Convertir URLs a PlaylistItems
@@ -138,11 +222,8 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
       
       setState(() {
         _playlist = items;
-        _currentIndex = _progress?.segmentId ?? 0;
-        // Asegurar que el índice esté dentro del rango
-        if (_currentIndex >= _playlist.length) {
-          _currentIndex = 0;
-        }
+        // SIEMPRE empezar desde el primer audio (índice 0), no desde progreso anterior
+        _currentIndex = 0;
       });
 
       // Siempre programar polling para actualizar cuando se generen más
@@ -163,11 +244,11 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
 
   /// Programa un refresh de la playlist para obtener nuevos audios generados
   void _schedulePlaylistRefresh() async {
-    // Si hay pocos audios, consultar cada 3 segundos (más rápido al inicio)
-    // Si ya hay varios, consultar cada 10 segundos
+    // Si hay pocos audios, consultar cada 2 segundos (más rápido al inicio para feedback inmediato)
+    // Si ya hay varios, consultar cada 8 segundos
     final interval = _playlist.length < 5 
-        ? const Duration(seconds: 3)  // Rápido al inicio
-        : const Duration(seconds: 10); // Normal después
+        ? const Duration(seconds: 2)  // Muy rápido al inicio
+        : const Duration(seconds: 8); // Normal después
     
     await Future.delayed(interval);
     if (!mounted || _loadingSegment) return;
@@ -176,6 +257,7 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
       final audioUrls = await TtsService.instance.getBookAudios(
         widget.book.intId,
         autoGenerate: 0, // No generar más, solo obtener los ya existentes
+        voiceId: _currentVoice?.id, // Pasar la voz actual
       );
       
       if (audioUrls.length > _playlist.length) {
@@ -432,55 +514,68 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
     final speeds = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5];
     showModalBottomSheet(
       context: context,
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Padding(
-              padding: EdgeInsets.all(8.0),
-              child: Text(
-                'Velocidad de Reproducción',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-            ),
-            Text(
-              'Ajusta la velocidad de la narración',
-              style: TextStyle(color: Colors.grey[600], fontSize: 14),
-            ),
-            const Divider(),
-            ...speeds.map((speed) {
-              final description = {
-                0.5: 'Muy lento',
-                0.75: 'Lento',
-                1.0: 'Normal',
-                1.25: 'Rápido',
-                1.5: 'Muy rápido',
-                1.75: 'Extra rápido',
-                2.0: 'Máximo',
-                2.5: 'Ultra rápido',
-              }[speed] ?? '';
-
-              return ListTile(
-                leading: Icon(
-                  speed < 1.0 ? Icons.slow_motion_video : Icons.fast_forward,
-                  color: _speed == speed
-                      ? Theme.of(context).colorScheme.secondary
-                      : null,
+      isScrollControlled: true,
+      builder: (context) => DraggableScrollableSheet(
+        initialChildSize: 0.6,
+        minChildSize: 0.4,
+        maxChildSize: 0.8,
+        expand: false,
+        builder: (context, scrollController) => Container(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.all(8.0),
+                child: Text(
+                  'Velocidad de Reproducción',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                 ),
-                title: Text('${speed.toStringAsFixed(2)}x'),
-                subtitle: Text(description),
-                trailing: _speed == speed
-                    ? Icon(Icons.check, color: Theme.of(context).colorScheme.secondary)
-                    : null,
-                onTap: () {
-                  _changeSpeed(speed);
-                  Navigator.pop(context);
-                },
-              );
-            }),
-          ],
+              ),
+              Text(
+                'Ajusta la velocidad de la narración',
+                style: TextStyle(color: Colors.grey[600], fontSize: 14),
+              ),
+              const Divider(),
+              Expanded(
+                child: ListView.builder(
+                  controller: scrollController,
+                  itemCount: speeds.length,
+                  itemBuilder: (context, index) {
+                    final speed = speeds[index];
+                    final description = {
+                      0.5: 'Muy lento',
+                      0.75: 'Lento',
+                      1.0: 'Normal',
+                      1.25: 'Rápido',
+                      1.5: 'Muy rápido',
+                      1.75: 'Extra rápido',
+                      2.0: 'Máximo',
+                      2.5: 'Ultra rápido',
+                    }[speed] ?? '';
+
+                    return ListTile(
+                      leading: Icon(
+                        speed < 1.0 ? Icons.slow_motion_video : Icons.fast_forward,
+                        color: _speed == speed
+                            ? Theme.of(context).colorScheme.secondary
+                            : null,
+                      ),
+                      title: Text('${speed.toStringAsFixed(2)}x'),
+                      subtitle: Text(description),
+                      trailing: _speed == speed
+                          ? Icon(Icons.check, color: Theme.of(context).colorScheme.secondary)
+                          : null,
+                      onTap: () {
+                        _changeSpeed(speed);
+                        Navigator.pop(context);
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -587,14 +682,15 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             IconButton(
-                              tooltip: 'Atrasar 20s',
+                              tooltip: 'Atrasar / segmento previo',
                               icon: const Icon(Icons.replay_10),
                               iconSize: 36,
-                              onPressed: () => _seekRelative(const Duration(seconds: -20)),
+                              onPressed: _onBackPressed,
                             ),
                             const SizedBox(width: 12),
-                            // Botón de reproducir con indicador de carga
-                            _loadingSegment
+                            // Botón de reproducir con indicador de carga.
+                            // Mostrar spinner SOLO si estamos cargando y NO tenemos ya ningún audio disponible.
+                            (_loadingSegment && _playlist.isEmpty)
                                 ? const SizedBox(
                                     width: 56,
                                     height: 56,
@@ -603,11 +699,17 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
                                       child: CircularProgressIndicator(strokeWidth: 3),
                                     ),
                                   )
-                                : IconButton(
-                                    tooltip: _player.playing ? 'Pausar' : 'Reproducir',
-                                    icon: Icon(_player.playing ? Icons.pause_circle : Icons.play_circle),
-                                    iconSize: 56,
-                                    onPressed: _togglePlay,
+                                : StreamBuilder<bool>(
+                                    stream: _player.playingStream,
+                                    builder: (context, snapshot) {
+                                      final playing = snapshot.data ?? false;
+                                      return IconButton(
+                                        tooltip: playing ? 'Pausar' : 'Reproducir',
+                                        icon: Icon(playing ? Icons.pause_circle : Icons.play_circle),
+                                        iconSize: 56,
+                                        onPressed: _togglePlay,
+                                      );
+                                    },
                                   ),
                             const SizedBox(width: 12),
                             IconButton(

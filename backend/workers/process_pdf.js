@@ -92,51 +92,113 @@ async function processPdf(libroId) {
     const documentoId = docResult.rows[0].id;
     console.log(`Documento ID: ${documentoId}`);
 
-    // 3. Descargar PDF desde Supabase Storage
+    // 3. Descargar PDF desde Supabase Storage (tolerante: usa fetch si existe; si falla, usa SDK de Supabase)
     console.log('Descargando PDF...');
     const pdfUrl = libro.archivo;
-    const response = await fetch(pdfUrl);
-    if (!response.ok) {
-      throw new Error(`Error descargando PDF: ${response.statusText}`);
+    let pdfBuffer;
+    let fetched = false;
+    try {
+      if (typeof fetch === 'function') {
+        const response = await fetch(pdfUrl);
+        if (response.ok) {
+          pdfBuffer = Buffer.from(await response.arrayBuffer());
+          fetched = true;
+        } else {
+          console.warn(`Fetch no OK (${response.status}) para ${pdfUrl}, usando fallback por SDK`);
+        }
+      } else {
+        console.warn('fetch no está disponible en este runtime, usando fallback por SDK');
+      }
+    } catch (e) {
+      console.warn('Fallo al hacer fetch directo del PDF, usando fallback por SDK:', e.message);
     }
-    const pdfBuffer = Buffer.from(await response.arrayBuffer());
+
+    if (!fetched) {
+      // Intentar descargar con Supabase SDK (funciona aunque el bucket sea privado)
+      try {
+        // Inferir la ruta interna del archivo a partir de la URL pública
+        // Ejemplo URL: .../storage/v1/object/public/archivos_libros/libros/archivo.pdf
+        const url = new URL(pdfUrl);
+        const marker = '/archivos_libros/';
+        const idx = url.pathname.indexOf(marker);
+        if (idx === -1) {
+          throw new Error('No se pudo inferir la ruta del archivo desde la URL');
+        }
+        const filePath = url.pathname.substring(idx + marker.length);
+        const { data, error } = await supabase.storage
+          .from('archivos_libros')
+          .download(filePath);
+        if (error) throw error;
+        const ab = await data.arrayBuffer();
+        pdfBuffer = Buffer.from(ab);
+      } catch (e) {
+        throw new Error(`Error descargando PDF via SDK: ${e.message}`);
+      }
+    }
+
     console.log(`PDF descargado: ${pdfBuffer.length} bytes`);
 
-    // 4. Extraer texto con pdf-parse v2
+    // 4. Extraer texto con pdf-parse (compatibilidad v1/v2)
     console.log('Extrayendo texto...');
-    const parser = new PDFParse({ data: pdfBuffer });
-    const result = await parser.getText();
-    const fullText = result.text;
-    // Obtener info de páginas con getInfo (puede fallar, usar null si falla)
+    let fullText = '';
     let totalPages = null;
     try {
-      const info = await parser.getInfo();
-      totalPages = info.numPages || null;
+      if (PDFParse) {
+        // Intentar API v2 basada en clase
+        const parser = new PDFParse({ data: pdfBuffer });
+        const result = await parser.getText();
+        fullText = result.text || '';
+        try {
+          const info = await parser.getInfo();
+          totalPages = info?.numPages || null;
+        } catch (e) {
+          console.warn('No se pudo obtener info de páginas (v2):', e.message);
+        }
+        await parser.destroy?.();
+      } else {
+        throw new Error('PDFParse class no disponible');
+      }
     } catch (e) {
-      console.warn('No se pudo obtener info de páginas:', e.message);
+      console.warn('Fallo API v2 de pdf-parse, probando compatibilidad v1:', e.message);
+      try {
+        const legacyPdfParse = require('pdf-parse');
+        const res = await legacyPdfParse(pdfBuffer);
+        fullText = res.text || '';
+        totalPages = res.numpages || null;
+      } catch (e2) {
+        throw new Error(`No se pudo extraer texto del PDF: ${e2.message}`);
+      }
     }
-    await parser.destroy();
-    
+
     console.log(`Texto extraído: ${fullText.length} caracteres, ${totalPages || '?'} páginas`);
 
     if (!fullText || fullText.trim().length === 0) {
       throw new Error('No se pudo extraer texto del PDF');
     }
 
-    // 5. Generar hash del texto
-    const textHash = crypto.createHash('sha256').update(fullText).digest('hex');
+    // 5. Limpiar metadatos/portada: saltar los primeros ~3000 caracteres
+    // que usualmente contienen: título, autor, índice, copyright, portada, etc.
+    const SKIP_CHARS = 3000; // Ajustable según necesidad
+    const cleanedText = fullText.length > SKIP_CHARS ? fullText.substring(SKIP_CHARS) : fullText;
+    const skippedChars = fullText.length - cleanedText.length;
+    
+    console.log(`Omitiendo primeros ${skippedChars} caracteres (metadatos/portada)`);
+    console.log(`Texto limpio: ${cleanedText.length} caracteres`);
 
-    // 6. Segmentar texto
+    // 6. Generar hash del texto limpio
+    const textHash = crypto.createHash('sha256').update(cleanedText).digest('hex');
+
+    // 7. Segmentar texto limpio
     console.log('Segmentando texto...');
-    const chunks = chunkTextBySentence(fullText, 1500);
+    const chunks = chunkTextBySentence(cleanedText, 1500);
     console.log(`Generados ${chunks.length} segmentos`);
 
-    // 7. Limpiar segmentos existentes (si reprocessing)
+    // 8. Limpiar segmentos existentes (si reprocessing)
     await pool.query('DELETE FROM tbl_segmentos WHERE documento_id = $1', [documentoId]);
 
-    // 8. Insertar segmentos en BD
+    // 9. Insertar segmentos en BD
     console.log('Guardando segmentos en BD...');
-    let currentOffset = 0;
+    let currentOffset = SKIP_CHARS; // Empezar desde donde saltamos los metadatos
 
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
@@ -163,7 +225,7 @@ async function processPdf(libroId) {
       currentOffset = endChar;
     }
 
-    // 9. Actualizar documento como listo
+    // 10. Actualizar documento como listo (usar cleanedText.length)
     await pool.query(
       `UPDATE tbl_documentos 
        SET estado = 'listo', 
@@ -172,15 +234,15 @@ async function processPdf(libroId) {
            total_segmentos = $3,
            updated_at = NOW()
        WHERE id = $4`,
-      [textHash, fullText.length, chunks.length, documentoId]
+      [textHash, cleanedText.length, chunks.length, documentoId]
     );
 
     console.log(`\n✅ Procesamiento completado exitosamente`);
-    console.log(`   Total caracteres: ${fullText.length}`);
+    console.log(`   Total caracteres: ${cleanedText.length} (${skippedChars} caracteres omitidos)`);
     console.log(`   Total segmentos: ${chunks.length}`);
     console.log(`   Estado: listo\n`);
 
-    // 10. Encolar generación inicial para todas las voces activas (si Redis está disponible)
+    // 11. Encolar generación inicial para todas las voces activas (si Redis está disponible)
     try {
       const voicesRes = await pool.query(`SELECT id FROM tbl_voces WHERE activo = true`);
       const voiceIds = voicesRes.rows.map(r => r.id);

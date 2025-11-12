@@ -5,6 +5,7 @@ import '../widgets/category_carousel.dart';
 import '../services/api_service.dart';
 import '../widgets/loom_banner.dart';
 import '../widgets/search_book_card.dart';
+import '../auth/google_auth_service.dart';
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -15,7 +16,11 @@ class SearchScreen extends StatefulWidget {
 
 class _SearchScreenState extends State<SearchScreen> {
   late Future<List<Book>> _booksFuture;
-  final List<String> categories = [
+  String? _userId;
+  int _selectedCategoryIndex = 0;
+  // Categorías base (se muestran aunque la BD esté vacía o sin categorías)
+  final List<String> _baseCategories = const [
+    'General',
     'Romance',
     'Terror',
     'Aventura',
@@ -23,47 +28,136 @@ class _SearchScreenState extends State<SearchScreen> {
     'Clásicos',
     'Ciencia Ficción',
     'Drama',
-    'Infantil',
+    'Infantil'
   ];
+  List<String> categories = [];
 
   @override
   void initState() {
     super.initState();
-    _booksFuture = ApiService.fetchBooks();
+  categories = List<String>.from(_baseCategories);
+  _booksFuture = ApiService.fetchBooks();
+    _loadUserId();
+    _booksFuture.then((list) {
+      // Derivar categorías dinámicas desde la relación many-to-many
+      final dynamicCats = list
+        .expand((b) => b.categorias.map((c) => (c.nombre).trim()))
+        .where((name) => name.isNotEmpty)
+        .toSet();
+      if (dynamicCats.isNotEmpty) {
+        final merged = <String>{..._baseCategories, ...dynamicCats}.toList()..sort((a,b){
+          if (a == 'General') return -1;
+          if (b == 'General') return 1;
+          return a.compareTo(b);
+        });
+        setState(() {
+          categories = merged;
+        });
+      }
+    });
   }
 
-  Future<void> _showBookInfoDialog(Book book) async {
-    showDialog(
+  Future<void> _loadUserId() async {
+    try {
+      final user = GoogleAuthService().currentUser;
+      if (user != null) {
+        final userId = await ApiService.ensureUser(
+          firebaseUid: user.uid,
+          email: user.email,
+          displayName: user.displayName ?? 'Usuario',
+        );
+        setState(() {
+          _userId = userId;
+        });
+      }
+    } catch (e) {
+      print('❌ Error al cargar userId: $e');
+    }
+  }
+
+  Future<void> _showAddToLibraryDialog(Book book) async {
+    if (_userId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Error: No se pudo obtener tu usuario')),
+      );
+      return;
+    }
+
+    final result = await showDialog<bool>(
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: Text(book.titulo),
-          content: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (book.autores.isNotEmpty) ...[
-                  const Text('Autor:', style: TextStyle(fontWeight: FontWeight.bold)),
-                  Text(book.autores.map((a) => a.nombre).join(', ')),
-                  const SizedBox(height: 8),
-                ],
-                if (book.descripcion != null && book.descripcion!.isNotEmpty) ...[
-                  const Text('Descripción:', style: TextStyle(fontWeight: FontWeight.bold)),
-                  Text(book.descripcion!),
-                ],
+          title: const Text('¿Quieres leer este libro?'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                book.titulo,
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+              if (book.autores.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  book.autores.map((a) => a.nombre).join(', '),
+                  style: TextStyle(color: Colors.grey[700]),
+                ),
               ],
-            ),
+            ],
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cerrar'),
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.primary,
+                foregroundColor: Colors.black,
+              ),
+              child: const Text('Aceptar'),
             ),
           ],
         );
       },
     );
+
+    if (result == true) {
+      try {
+        // Mostrar loading
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Agregando a tu biblioteca...')),
+        );
+
+        final message = await ApiService.addBookToLibrary(_userId!, book.intId);
+        
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(message),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+
+        // Opcional: Navegar a la biblioteca (BooksScreen) y seleccionar la pestaña 1
+        // Esto asume que BooksScreen escucha el índice y recarga la biblioteca
+        // Si la navegación actual no permite esto, puede omitirse.
+        // Navigator.of(context).pushReplacement(
+        //   MaterialPageRoute(builder: (_) => const BooksScreen(initialTab: 1)),
+        // );
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -76,7 +170,13 @@ class _SearchScreenState extends State<SearchScreen> {
           children: [
             const LoomBanner(),
             const SearchBarWidget(),
-            CategoryCarousel(categories: categories),
+            CategoryCarousel(
+              categories: categories,
+              onCategorySelected: (idx) {
+                setState(() => _selectedCategoryIndex = idx);
+              },
+              selectedIndex: _selectedCategoryIndex,
+            ),
             const Padding(
               padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               child: Text(
@@ -102,6 +202,13 @@ class _SearchScreenState extends State<SearchScreen> {
                         );
                     } else if (snapshot.hasData) {
                       final books = snapshot.data!;
+                      // Filtrar por categoría seleccionada (si no es 'General')
+                      final selectedCat = (_selectedCategoryIndex >= 0 && _selectedCategoryIndex < categories.length)
+                        ? categories[_selectedCategoryIndex]
+                        : 'General';
+                      final displayed = (selectedCat == 'General')
+                        ? books
+                        : books.where((b) => b.categorias.any((c) => c.nombre == selectedCat)).toList();
                       return GridView.builder(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 10,
@@ -114,11 +221,11 @@ class _SearchScreenState extends State<SearchScreen> {
                               crossAxisSpacing: 12,
                               childAspectRatio: 0.75,
                             ),
-                        itemCount: books.length,
+                        itemCount: displayed.length,
                         itemBuilder: (context, index) {
                           return SearchBookCard(
-                            book: books[index],
-                            onTap: () => _showBookInfoDialog(books[index]),
+                            book: displayed[index],
+                            onTap: () => _showAddToLibraryDialog(displayed[index]),
                           );
                         },
                       );

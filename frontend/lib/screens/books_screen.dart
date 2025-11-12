@@ -21,23 +21,44 @@ class BooksScreen extends StatefulWidget {
 class _BooksScreenState extends State<BooksScreen> {
   late int _selectedIndex;
   Future<List<Book>>? _booksFuture;
+  String? _userId;
 
   @override
   void initState() {
     super.initState();
     _selectedIndex = widget.initialTab;
-    _booksFuture = ApiService.fetchBooks();
+    _loadUserLibrary();
   }
 
-  void _loadBooks() {
-    // Cargar TODOS los libros disponibles (sin filtro de usuario)
-    setState(() {
-      _booksFuture = ApiService.fetchBooks();
-    });
+  Future<void> _loadUserLibrary() async {
+    try {
+      // Obtener el userId del GoogleAuthService
+      final user = GoogleAuthService().currentUser;
+      if (user == null) {
+        print('⚠️ No hay usuario logueado');
+        return;
+      }
+      
+      // Obtener id_usuario del backend
+      final userId = await ApiService.ensureUser(
+        firebaseUid: user.uid,
+        email: user.email,
+        displayName: user.displayName ?? 'Usuario',
+      );
+      
+      _userId = userId;
+      
+      // Cargar biblioteca personal del usuario
+      setState(() {
+        _booksFuture = ApiService.fetchUserLibrary(_userId!);
+      });
+    } catch (e) {
+      print('❌ Error al cargar biblioteca: $e');
+    }
   }
 
   void _refreshBooks() {
-    _loadBooks(); // Ya tiene setStates
+    _loadUserLibrary();
   }
 
   @override
@@ -56,7 +77,7 @@ class _BooksScreenState extends State<BooksScreen> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: Text(
-              'Libros disponibles',
+              'Mi Biblioteca',
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
             ),
           ),
@@ -75,11 +96,29 @@ class _BooksScreenState extends State<BooksScreen> {
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                const Icon(Icons.library_books, size: 64, color: Colors.grey),
-                                const SizedBox(height: 16),
-                                const Text(
-                                  'No hay libros disponibles',
-                                  style: TextStyle(fontSize: 16, color: Colors.grey),
+                                Icon(
+                                  Icons.auto_stories,
+                                  size: 80,
+                                  color: Colors.grey[400],
+                                ),
+                                const SizedBox(height: 24),
+                                Text(
+                                  '¡Embárcate en una\naventura de lectura!',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.grey[700],
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                Text(
+                                  'Explora libros en la pestaña de búsqueda',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    color: Colors.grey[600],
+                                  ),
                                 ),
                               ],
                             ),
@@ -181,6 +220,10 @@ class _BooksScreenState extends State<BooksScreen> {
           setState(() {
             _selectedIndex = index;
           });
+          // Si el usuario entra a la pestaña de Biblioteca, recargar siempre
+          if (index == 1) {
+            _loadUserLibrary();
+          }
         },
       ),
     );

@@ -10,6 +10,7 @@ class Book {
   final int? palabras;
   final List<Author> autores;
   final List<Genre> generos;
+  final List<Category> categorias;
 
   Book({
     required this.id,
@@ -20,8 +21,9 @@ class Book {
     this.archivo,
     this.paginas,
     this.palabras,
-    this.autores = const [],
-    this.generos = const [],
+  this.autores = const [],
+  this.generos = const [],
+  this.categorias = const [],
   });
 
   /// Obtiene el id como entero
@@ -45,6 +47,9 @@ class Book {
         : [],
       generos: json['generos'] != null
         ? (json['generos'] as List).map((g) => Genre.fromJson(g)).toList()
+        : [],
+      categorias: json['categorias'] != null
+        ? (json['categorias'] as List).map((c) => Category.fromJson(c)).toList()
         : [],
     );
   }
@@ -76,6 +81,23 @@ class Genre {
     return Genre(
       id: (json['id'] ?? 0).toString(),
       nombre: json['nombre'] ?? 'Sin género',
+    );
+  }
+}
+
+/// Modelo de categoría
+class Category {
+  final String id;
+  final String nombre;
+  final String? descripcion;
+
+  Category({required this.id, required this.nombre, this.descripcion});
+
+  factory Category.fromJson(Map<String, dynamic> json) {
+    return Category(
+      id: (json['id'] ?? 0).toString(),
+      nombre: json['nombre'] ?? 'General',
+      descripcion: json['descripcion'],
     );
   }
 }

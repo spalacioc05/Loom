@@ -13,7 +13,7 @@ class TtsService {
 
   // Ajusta esta URL a la IP de tu backend accesible desde el dispositivo/emulador.
   // Sugerencia: usa SharedPreferences o un archivo de config si necesitas cambiarla en runtime.
-  static const String _baseUrl = 'http://192.168.1.1:3000';
+  static const String _baseUrl = 'http://192.168.1.6:3000';
 
   /// Obtiene las voces reales del backend (`GET /voices`).
   Future<List<Voice>> getVoices() async {
@@ -29,8 +29,12 @@ class TtsService {
   /// Obtiene TODOS los audios de un libro (`GET /tts/libro/:libroId/audios`).
   /// Retorna una lista de URLs ordenadas por segmento.
   /// Si autoGenerate > 0, genera automáticamente los primeros N audios faltantes.
-  Future<List<String>> getBookAudios(int libroId, {int autoGenerate = 5}) async {
-    final uri = Uri.parse('$_baseUrl/tts/libro/$libroId/audios?autoGenerate=$autoGenerate');
+  Future<List<String>> getBookAudios(int libroId, {int autoGenerate = 5, String? voiceId}) async {
+    final queryParams = {
+      'autoGenerate': autoGenerate.toString(),
+      if (voiceId != null) 'voiceId': voiceId,
+    };
+    final uri = Uri.parse('$_baseUrl/tts/libro/$libroId/audios').replace(queryParameters: queryParams);
     final resp = await http.get(uri).timeout(const Duration(seconds: 10));
     
     if (resp.statusCode != 200) {
@@ -45,6 +49,33 @@ class TtsService {
         .where((a) => a['audio_url'] != null)
         .map((a) => a['audio_url'] as String)
         .toList();
+  }
+
+  /// Quick-start: Genera el primer audio de forma síncrona y lo devuelve inmediatamente.
+  /// Mientras tanto, genera los siguientes 3 audios en background.
+  /// Retorna la URL del primer audio listo para reproducir.
+  Future<String> quickStartBook(int libroId, String voiceId) async {
+    final uri = Uri.parse('$_baseUrl/tts/libro/$libroId/quick-start');
+    final body = {'voiceId': voiceId};
+    
+    print('🚀 QuickStart: Esperando primer audio para libro $libroId...');
+    
+    final resp = await http.post(
+      uri,
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(body),
+    ).timeout(const Duration(seconds: 30)); // Timeout generoso para generación
+    
+    if (resp.statusCode != 200) {
+      throw Exception('Error en quick-start: ${resp.statusCode} ${resp.body}');
+    }
+    
+    final map = jsonDecode(resp.body) as Map<String, dynamic>;
+    final firstAudioUrl = map['first_audio_url'] as String;
+    
+    print('✅ Primer audio listo: $firstAudioUrl');
+    
+    return firstAudioUrl;
   }
 
   /// Solicita una playlist inicial de segmentos (`POST /tts/playlist`).
@@ -129,6 +160,27 @@ class TtsService {
     final prefs = await SharedPreferences.getInstance();
     final key = _progressKey(progress.documentId, progress.voiceId);
     await prefs.setString(key, jsonEncode(progress.toJson()));
+    // Intentar also sync con backend (no bloquear la UI si falla)
+    try {
+      final uri = Uri.parse('$_baseUrl/progress');
+      final body = {
+        'document_id': progress.documentId,
+        'voice_id': progress.voiceId,
+        'segment_id': progress.segmentId,
+        'intra_ms': progress.intraMs,
+        'global_offset_char': progress.globalOffsetChar,
+      };
+      final resp = await http.post(uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(body)).timeout(const Duration(seconds: 8));
+      if (resp.statusCode != 200 && resp.statusCode != 201) {
+        // Ignorar fallos del backend, ya está guardado localmente
+        // print('Advertencia: saveProgress backend responded ${resp.statusCode}');
+      }
+    } catch (e) {
+      // Silencioso: si falla la sincronización, la app seguirá funcionando con el cache local
+      // print('No se pudo sincronizar progreso con backend: $e');
+    }
   }
 
   Future<PlayProgress?> loadProgress(String documentId, String voiceId) async {

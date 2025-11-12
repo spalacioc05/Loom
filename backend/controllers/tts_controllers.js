@@ -1,7 +1,7 @@
 import pkg from 'pg';
 const { Pool } = pkg;
 import { createClient } from '@supabase/supabase-js';
-import { generateAudio, estimateDuration } from '../services/azure_tts.js';
+import { generateAudio, estimateDuration } from '../services/tts_provider.js';
 import { enqueueBatch } from '../services/tts_queue.js';
 
 const pool = new Pool({
@@ -88,10 +88,12 @@ const getPlaylist = async (req, res) => {
       return res.status(404).json({ error: 'Documento no encontrado' });
     }
 
-    if (docResult.rows[0].estado !== 'listo') {
+    const estadoDoc = docResult.rows[0].estado;
+    // Permitir reproducción temprana si está 'procesando'; solo bloquear si está en 'error'
+    if (estadoDoc === 'error') {
       return res.status(400).json({ 
-        error: 'Documento no está listo para reproducción',
-        estado: docResult.rows[0].estado 
+        error: 'Documento en estado de error',
+        estado: estadoDoc
       });
     }
 
@@ -134,7 +136,7 @@ const getPlaylist = async (req, res) => {
       ? [document_id, voice_id, startSegmentId]
       : [document_id, voice_id];
 
-    const segments = await pool.query(segmentQuery, params);
+  const segments = await pool.query(segmentQuery, params);
 
     const items = segments.rows.map(row => ({
       segment_id: row.id,
@@ -178,6 +180,7 @@ const getPlaylist = async (req, res) => {
     res.json({
       document_id,
       voice_id,
+      estado: estadoDoc,
       items,
       start_segment_id: items.length > 0 ? items[0].segment_id : null,
       start_intra_ms: startIntraMs,
@@ -380,7 +383,7 @@ const getProgress = async (req, res) => {
 const getBookAudios = async (req, res) => {
   try {
     const { libroId } = req.params;
-    const { autoGenerate } = req.query; // ?autoGenerate=5 genera los primeros 5 si no existen
+    const { autoGenerate, voiceId } = req.query; // ?autoGenerate=5&voiceId=uuid
 
     if (!libroId) {
       return res.status(400).json({ error: 'libroId es requerido' });
@@ -398,25 +401,39 @@ const getBookAudios = async (req, res) => {
 
     const documentoId = docResult.rows[0].id;
     const estado = docResult.rows[0].estado;
-
-    if (estado !== 'listo') {
+    // Permitir respuesta incluso si está 'procesando' para habilitar polling y generación temprana
+    if (estado === 'error') {
       return res.status(400).json({ 
-        error: 'Documento no está listo',
+        error: 'Documento en estado de error',
         estado 
       });
     }
 
-    // Obtener voz por defecto
-    const vozResult = await pool.query(
-      'SELECT id, codigo_voz FROM tbl_voces WHERE activo = true LIMIT 1'
-    );
-    
-    if (vozResult.rows.length === 0) {
-      return res.status(500).json({ error: 'No hay voces configuradas' });
-    }
+    // Usar voz especificada o la primera por defecto
+    let vozId, voiceCode;
+    if (voiceId) {
+      const vozResult = await pool.query(
+        'SELECT id, codigo_voz FROM tbl_voces WHERE id = $1 AND activo = true',
+        [voiceId]
+      );
+      if (vozResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Voz no encontrada' });
+      }
+      vozId = vozResult.rows[0].id;
+      voiceCode = vozResult.rows[0].codigo_voz;
+    } else {
+      // Obtener voz por defecto
+      const vozResult = await pool.query(
+        'SELECT id, codigo_voz FROM tbl_voces WHERE activo = true LIMIT 1'
+      );
+      
+      if (vozResult.rows.length === 0) {
+        return res.status(500).json({ error: 'No hay voces configuradas' });
+      }
 
-    const vozId = vozResult.rows[0].id;
-    const voiceCode = vozResult.rows[0].codigo_voz;
+      vozId = vozResult.rows[0].id;
+      voiceCode = vozResult.rows[0].codigo_voz;
+    }
 
     // Obtener todos los segmentos con sus audios (SALTAR segmento 0 = metadata)
     const audiosResult = await pool.query(
@@ -434,7 +451,16 @@ const getBookAudios = async (req, res) => {
     );
 
     if (audiosResult.rows.length === 0) {
-      return res.status(404).json({ error: 'No hay segmentos para este libro' });
+      // Si aún no hay segmentos (p.ej. segmentación inicial), devolver 200 con lista vacía para permitir polling en el cliente
+      return res.json({
+        libro_id: parseInt(libroId),
+        documento_id: documentoId,
+        estado,
+        total_segmentos: 0,
+        audios_generados: 0,
+        progreso_porcentaje: 0,
+        audios: []
+      });
     }
 
     const audios = audiosResult.rows.map(row => ({
@@ -445,15 +471,27 @@ const getBookAudios = async (req, res) => {
       texto_preview: row.texto ? row.texto.substring(0, 100) : null
     }));
 
-    // Si autoGenerate está activado, generar TODOS los audios faltantes en background
+    // Si autoGenerate está activado, generar los primeros N audios faltantes en background
+    // PRIORIDAD: Generar siempre los primeros 3 segmentos para reproducción inmediata
     if (autoGenerate && parseInt(autoGenerate) > 0) {
-      // Obtener TODOS los segmentos sin audio (no solo los primeros 5)
-      const faltantes = audiosResult.rows.filter(row => !row.audio_url);
+      const limit = parseInt(autoGenerate);
+      
+      // Obtener segmentos sin audio
+      const sinAudio = audiosResult.rows.filter(row => !row.audio_url);
+      
+      // Priorizar los primeros 3 segmentos (para inicio rápido)
+      const primerosTres = sinAudio.slice(0, 3);
+      // Luego los siguientes según el límite
+      const siguientes = sinAudio.slice(3, limit);
+      
+      // Combinar: primeros 3 + siguientes hasta completar limit
+      const faltantes = [...primerosTres, ...siguientes].slice(0, limit);
 
       if (faltantes.length > 0) {
-        console.log(`[BookAudios] 🚀 Iniciando generación de ${faltantes.length} audios en background...`);
+        console.log(`[BookAudios] 🚀 Generando ${faltantes.length} audios bajo demanda (de ${sinAudio.length} faltantes)...`);
+        console.log(`[BookAudios] ⚡ Priorizando primeros 3 segmentos para inicio rápido`);
         
-        // Generar TODOS en background de forma secuencial (para no saturar Azure API)
+        // Generar en background de forma secuencial (para no saturar API)
         (async () => {
           let generados = 0;
           let errores = 0;
@@ -463,7 +501,7 @@ const getBookAudios = async (req, res) => {
               const startTime = Date.now();
               console.log(`[BookAudios] 🔊 Generando ${generados + 1}/${faltantes.length} (segmento ${seg.orden})...`);
               
-              // Generar audio con Azure
+              // Generar audio con Azure (con reintentos automáticos)
               const audioBuffer = await generateAudio(seg.texto, voiceCode);
               
               // Subir a Supabase Storage
@@ -493,9 +531,15 @@ const getBookAudios = async (req, res) => {
               generados++;
               const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
               console.log(`[BookAudios] ✅ Segmento ${seg.orden} generado en ${elapsed}s (${generados}/${faltantes.length})`);
+              
+              // Delay de 500ms entre audios para no saturar Azure API
+              if (generados < faltantes.length) {
+                await new Promise(resolve => setTimeout(resolve, 500));
+              }
             } catch (err) {
               errores++;
               console.error(`[BookAudios] ❌ Error segmento ${seg.orden}:`, err.message);
+              // Continuar con el siguiente incluso si este falla
             }
           }
           
@@ -513,6 +557,7 @@ const getBookAudios = async (req, res) => {
     res.json({
       libro_id: parseInt(libroId),
       documento_id: documentoId,
+      estado,
       total_segmentos: total,
       audios_generados: conAudio,
       progreso_porcentaje: Math.round((conAudio / total) * 100),
@@ -524,6 +569,194 @@ const getBookAudios = async (req, res) => {
   }
 };
 
+// POST /tts/libro/:libroId/quick-start
+// Genera el PRIMER audio de forma síncrona si no existe, luego inicia generación de los siguientes 3 en background
+// Responde solo cuando el primer audio está listo
+const quickStartBook = async (req, res) => {
+  try {
+    const { libroId } = req.params;
+    const { voiceId } = req.body;
+
+    if (!libroId || !voiceId) {
+      return res.status(400).json({ error: 'libroId y voiceId son requeridos' });
+    }
+
+    console.log(`\n🚀 [QuickStart] Libro ${libroId}, Voz ${voiceId}`);
+
+    // 1. Obtener documento del libro
+    const docResult = await pool.query(
+      `SELECT id, estado FROM tbl_documentos WHERE libro_id = $1 ORDER BY updated_at DESC LIMIT 1`,
+      [libroId]
+    );
+
+    if (docResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Documento no encontrado para este libro' });
+    }
+
+    const documentoId = docResult.rows[0].id;
+    const estado = docResult.rows[0].estado;
+
+    if (estado === 'error') {
+      return res.status(400).json({ error: 'El documento está en estado de error' });
+    }
+
+    // 2. Obtener el PRIMER segmento (orden > 0, skipping metadata)
+    const firstSegResult = await pool.query(
+      `SELECT s.id, s.orden, s.texto 
+       FROM tbl_segmentos s
+       WHERE s.documento_id = $1 AND s.orden > 0
+       ORDER BY s.orden ASC
+       LIMIT 1`,
+      [documentoId]
+    );
+
+    if (firstSegResult.rows.length === 0) {
+      return res.status(404).json({ error: 'No hay segmentos disponibles para este libro' });
+    }
+
+    const firstSegment = firstSegResult.rows[0];
+    console.log(`   Primer segmento: orden ${firstSegment.orden}, ${firstSegment.texto.length} caracteres`);
+
+    // 3. Verificar si ya existe el audio del primer segmento
+    const existingAudio = await pool.query(
+      `SELECT audio_url FROM tbl_audios 
+       WHERE documento_id = $1 AND segmento_id = $2 AND voz_id = $3`,
+      [documentoId, firstSegment.id, voiceId]
+    );
+
+    let firstAudioUrl;
+
+    if (existingAudio.rows.length > 0) {
+      console.log(`   ✅ Primer audio ya existe`);
+      firstAudioUrl = existingAudio.rows[0].audio_url;
+    } else {
+      // 4. Generar el primer audio SINCRÓNICAMENTE
+      console.log(`   ⏳ Generando primer audio...`);
+      
+      const voiceResult = await pool.query(
+        `SELECT codigo_voz, configuracion FROM tbl_voces WHERE id = $1`,
+        [voiceId]
+      );
+
+      if (voiceResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Voz no encontrada' });
+      }
+
+      const voice = voiceResult.rows[0];
+      
+      try {
+        // Generar audio
+        const audioBuffer = await generateAudio(
+          firstSegment.texto,
+          voice.codigo_voz,
+          voice.configuracion || {}
+        );
+
+        // Subir a Supabase Storage
+        const fileName = `libro_${libroId}/segmento_${firstSegment.orden}.mp3`;
+        const { error: uploadError } = await supabase.storage
+          .from('audios_tts')
+          .upload(fileName, audioBuffer, {
+            contentType: 'audio/mpeg',
+            upsert: true
+          });
+
+        if (uploadError) throw uploadError;
+
+        // Obtener URL pública
+        const { data: urlData } = supabase.storage
+          .from('audios_tts')
+          .getPublicUrl(fileName);
+        
+        firstAudioUrl = urlData.publicUrl;
+
+        // Estimar duración
+        const duracion = estimateDuration(firstSegment.texto, (voice.configuracion || {}).rate);
+
+        // Guardar en BD
+        await pool.query(
+          `INSERT INTO tbl_audios (documento_id, segmento_id, voz_id, audio_url, duracion_ms, last_access_at, access_count)
+           VALUES ($1, $2, $3, $4, $5, NOW(), 1)
+           ON CONFLICT (documento_id, segmento_id, voz_id) 
+           DO UPDATE SET audio_url = EXCLUDED.audio_url, duracion_ms = EXCLUDED.duracion_ms, last_access_at = NOW()`,
+          [documentoId, firstSegment.id, voiceId, firstAudioUrl, duracion]
+        );
+
+        console.log(`   ✅ Primer audio generado: ${firstAudioUrl}`);
+      } catch (genError) {
+        console.error(`   ❌ Error generando primer audio:`, genError);
+        return res.status(500).json({ error: 'Error generando primer audio', detail: genError.message });
+      }
+    }
+
+    // 5. Iniciar generación en BACKGROUND de los siguientes 3 segmentos (NO esperar)
+    (async () => {
+      try {
+        const nextSegsResult = await pool.query(
+          `SELECT s.id, s.orden, s.texto 
+           FROM tbl_segmentos s
+           LEFT JOIN tbl_audios a ON a.segmento_id = s.id AND a.documento_id = s.documento_id AND a.voz_id = $2
+           WHERE s.documento_id = $1 AND s.orden > $3 AND a.id IS NULL
+           ORDER BY s.orden ASC
+           LIMIT 3`,
+          [documentoId, voiceId, firstSegment.orden]
+        );
+
+        if (nextSegsResult.rows.length > 0) {
+          console.log(`   🔄 Generando ${nextSegsResult.rows.length} segmentos adicionales en background...`);
+          
+          const voiceResult = await pool.query(
+            `SELECT codigo_voz, configuracion FROM tbl_voces WHERE id = $1`,
+            [voiceId]
+          );
+          const voice = voiceResult.rows[0];
+
+          for (const seg of nextSegsResult.rows) {
+            try {
+              const audioBuffer = await generateAudio(seg.texto, voice.codigo_voz, voice.configuracion || {});
+              const fileName = `libro_${libroId}/segmento_${seg.orden}.mp3`;
+              
+              await supabase.storage.from('audios_tts').upload(fileName, audioBuffer, {
+                contentType: 'audio/mpeg',
+                upsert: true
+              });
+
+              const { data: urlData } = supabase.storage.from('audios_tts').getPublicUrl(fileName);
+              const duracion = estimateDuration(seg.texto, (voice.configuracion || {}).rate);
+
+              await pool.query(
+                `INSERT INTO tbl_audios (documento_id, segmento_id, voz_id, audio_url, duracion_ms, last_access_at, access_count)
+                 VALUES ($1, $2, $3, $4, $5, NOW(), 1)
+                 ON CONFLICT (documento_id, segmento_id, voz_id) 
+                 DO UPDATE SET audio_url = EXCLUDED.audio_url, duracion_ms = EXCLUDED.duracion_ms`,
+                [documentoId, seg.id, voiceId, urlData.publicUrl, duracion]
+              );
+
+              console.log(`   ✅ Segmento ${seg.orden} generado en background`);
+            } catch (err) {
+              console.error(`   ⚠️  Error en segmento ${seg.orden}:`, err.message);
+            }
+          }
+        }
+      } catch (err) {
+        console.error('   ⚠️  Error en generación background:', err.message);
+      }
+    })(); // Fire and forget
+
+    // 6. Responder inmediatamente con el primer audio
+    res.json({
+      success: true,
+      first_audio_url: firstAudioUrl,
+      segment_orden: firstSegment.orden,
+      message: 'Primer audio listo. Generando siguientes en background.'
+    });
+
+  } catch (error) {
+    console.error('[QuickStart] Error:', error);
+    res.status(500).json({ error: 'Error en quick-start', detail: error.message });
+  }
+};
+
 export {
   getVoices,
   getPlaylist,
@@ -531,4 +764,5 @@ export {
   saveProgress,
   getProgress,
   getBookAudios,
+  quickStartBook,
 };

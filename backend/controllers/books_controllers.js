@@ -6,7 +6,7 @@ const pdfParse = require('pdf-parse');
 import { PDFDocument } from 'pdf-lib';
 import { processPdf } from '../workers/process_pdf.js';
 
-// Obtener todos los libros disponibles con autores y géneros
+// Obtener todos los libros disponibles con autores, géneros y categorías
 export async function getAllBooks(req, res) {
 	try {
 		const books = await sql`
@@ -30,12 +30,20 @@ export async function getAllBooks(req, res) {
 						DISTINCT jsonb_build_object('id', g.id_genero, 'nombre', g.nombre)
 					) FILTER (WHERE g.id_genero IS NOT NULL),
 					'[]'
-				) as generos
+				) as generos,
+				COALESCE(
+					json_agg(
+						DISTINCT jsonb_build_object('id', c.id_categoria, 'nombre', c.nombre)
+					) FILTER (WHERE c.id_categoria IS NOT NULL),
+					'[]'
+				) as categorias
 			FROM tbl_libros l
 			LEFT JOIN tbl_libros_x_autores la ON l.id_libro = la.id_libro
 			LEFT JOIN tbl_autores a ON la.id_autor = a.id_autor
 			LEFT JOIN tbl_libros_x_generos lg ON l.id_libro = lg.id_libro
 			LEFT JOIN tbl_generos g ON lg.id_genero = g.id_genero
+			LEFT JOIN tbl_libros_x_categorias lc ON l.id_libro = lc.id_libro
+			LEFT JOIN tbl_categorias c ON lc.id_categoria = c.id_categoria
 			GROUP BY l.id_libro, l.titulo, l.descripcion, l.fecha_publicacion, l.portada, l.archivo, l.paginas, l.palabras
 			ORDER BY l.id_libro DESC
 		`;
@@ -43,6 +51,22 @@ export async function getAllBooks(req, res) {
 	} catch (error) {
 		console.error('Error fetching books:', error);
 		res.status(500).json({ error: 'Error fetching books' });
+	}
+}
+
+// Obtener todas las categorías disponibles desde tbl_categorias
+export async function getCategories(req, res) {
+	try {
+		const categorias = await sql`
+			SELECT id_categoria as id, nombre, descripcion
+			FROM tbl_categorias
+			ORDER BY nombre
+		`;
+		
+		res.json(categorias);
+	} catch (error) {
+		console.error('Error fetching categories:', error);
+		res.status(500).json({ error: 'Error fetching categories' });
 	}
 }
 
@@ -79,13 +103,21 @@ export async function getUserLibrary(req, res) {
 						DISTINCT jsonb_build_object('id', g.id_genero, 'nombre', g.nombre)
 					) FILTER (WHERE g.id_genero IS NOT NULL),
 					'[]'
-				) as generos
+				) as generos,
+				COALESCE(
+					json_agg(
+						DISTINCT jsonb_build_object('id', c.id_categoria, 'nombre', c.nombre)
+					) FILTER (WHERE c.id_categoria IS NOT NULL),
+					'[]'
+				) as categorias
 			FROM tbl_libros_x_usuarios x
 			INNER JOIN tbl_libros l ON x.id_libro = l.id_libro
 			LEFT JOIN tbl_libros_x_autores la ON l.id_libro = la.id_libro
 			LEFT JOIN tbl_autores a ON la.id_autor = a.id_autor
 			LEFT JOIN tbl_libros_x_generos lg ON l.id_libro = lg.id_libro
 			LEFT JOIN tbl_generos g ON lg.id_genero = g.id_genero
+			LEFT JOIN tbl_libros_x_categorias lc ON l.id_libro = lc.id_libro
+			LEFT JOIN tbl_categorias c ON lc.id_categoria = c.id_categoria
 			WHERE x.id_usuario = ${userId}::bigint
 			GROUP BY l.id_libro, l.titulo, l.descripcion, l.fecha_publicacion, l.portada, l.archivo, l.paginas, l.palabras, x.fecha_ultima_lectura
 			ORDER BY x.fecha_ultima_lectura DESC NULLS LAST, l.id_libro DESC
@@ -176,7 +208,7 @@ export async function uploadBook(req, res) {
 		console.log('Body:', req.body);
 		console.log('Files:', req.files);
 		
-		const { titulo, descripcion } = req.body;
+		const { titulo, descripcion, categoria } = req.body;
 		const pdfFile = req.files?.pdf?.[0];
 		const portadaFile = req.files?.portada?.[0];
 
@@ -188,6 +220,22 @@ export async function uploadBook(req, res) {
 		if (!titulo) {
 			console.log('❌ Error: Falta título');
 			return res.status(400).json({ error: 'El título es requerido' });
+		}
+
+		// categoria ahora es un JSON string de array de IDs: "[1, 3, 5]"
+		let categoriasIds = [];
+		if (!categoria || !categoria.trim()) {
+			console.log('❌ Error: Falta categoría');
+			return res.status(400).json({ error: 'Al menos una categoría es requerida' });
+		}
+		
+		try {
+			categoriasIds = JSON.parse(categoria);
+			if (!Array.isArray(categoriasIds) || categoriasIds.length === 0) {
+				return res.status(400).json({ error: 'Debe seleccionar al menos una categoría' });
+			}
+		} catch (e) {
+			return res.status(400).json({ error: 'Formato de categorías inválido' });
 		}
 
 		console.log('PDF recibido:', pdfFile.originalname, `(${pdfFile.size} bytes)`);
@@ -255,10 +303,21 @@ export async function uploadBook(req, res) {
 		// Obtener fecha actual
 		const fechaActual = new Date().toISOString().split('T')[0]; // Formato: YYYY-MM-DD
 
-		// Generar nombre único para el archivo
-		const timestamp = Date.now();
-		const fileName = `${titulo.replace(/\s+/g, '-').toLowerCase()}-${timestamp}.pdf`;
-		const filePath = `libros/${fileName}`;
+				// Generar nombre único para el archivo y sanitizarlo (quitar acentos y caracteres inválidos)
+				const timestamp = Date.now();
+				// Normalizar y remover diacríticos (ñ, á, é, etc.)
+				const safeBase = titulo
+					.normalize('NFKD')
+					.replace(/\p{Diacritic}/gu, '')
+					.toLowerCase()
+					// reemplazar cualquier caracter no alfanumérico por guión
+					.replace(/[^a-z0-9]+/g, '-')
+					// quitar guiones repetidos y guiones al inicio/final
+					.replace(/^-+|-+$/g, '')
+					.slice(0, 180); // limitar longitud
+
+				const fileName = `${safeBase}-${timestamp}.pdf`;
+				const filePath = `libros/${fileName}`;
 
 		console.log('Subiendo archivo a Supabase Storage...');
 		console.log('Bucket: archivos_libros');
@@ -296,7 +355,8 @@ export async function uploadBook(req, res) {
 		let portadaUrl = null;
 		if (portadaFile) {
 			console.log('Subiendo portada a Supabase Storage...');
-			const portadaFileName = `${titulo.replace(/\s+/g, '-').toLowerCase()}-${timestamp}-portada.${portadaFile.originalname.split('.').pop()}`;
+			const portadaExt = portadaFile.originalname.split('.').pop();
+			const portadaFileName = `${safeBase}-${timestamp}-portada.${portadaExt}`;
 			const portadaPath = `portadas/${portadaFileName}`;
 
 			const { data: portadaUploadData, error: portadaUploadError } = await supabase.storage
@@ -345,6 +405,15 @@ export async function uploadBook(req, res) {
 		const newBook = result[0];
 		console.log('✅ Libro insertado exitosamente:', newBook.id_libro);
 
+		// Insertar relaciones con categorías
+		console.log('Insertando categorías para el libro...');
+		for (const catId of categoriasIds) {
+			await sql`
+				INSERT INTO tbl_libros_x_categorias (id_libro, id_categoria)
+				VALUES (${newBook.id_libro}, ${catId})
+			`;
+		}
+		console.log(`✅ ${categoriasIds.length} categoría(s) asociada(s)`);
 
 		// Lanzar segmentación en background (no bloquear la respuesta)
 		try {

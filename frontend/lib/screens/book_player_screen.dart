@@ -797,7 +797,7 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
             const SizedBox(width: 8),
             Flexible(
               child: Text(
-                _currentVoice?.voiceCode.split('-').last ?? 'Voz',
+                _currentVoice?.name ?? 'Seleccionar voz',
                 style: TextStyle(
                   fontSize: 13,
                   color: Theme.of(context).colorScheme.primary,
@@ -849,23 +849,16 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
   }
 
   void _showVoiceSelector() {
-    // Agrupar voces por idioma/país
-    final voicesByLang = <String, List<Voice>>{};
-    for (var voice in _voices) {
-      if (!voicesByLang.containsKey(voice.lang)) {
-        voicesByLang[voice.lang] = [];
-      }
-      voicesByLang[voice.lang]!.add(voice);
-    }
-
+    if (_voices.isEmpty) return;
+    
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.7,
-        minChildSize: 0.5,
-        maxChildSize: 0.95,
+        initialChildSize: 0.5,
+        minChildSize: 0.3,
+        maxChildSize: 0.8,
         expand: false,
         builder: (context, scrollController) => Container(
           decoration: const BoxDecoration(
@@ -890,99 +883,70 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
               Expanded(
                 child: ListView.builder(
                   controller: scrollController,
-                  itemCount: voicesByLang.length,
+                  itemCount: _voices.length,
                   itemBuilder: (context, index) {
-                    final lang = voicesByLang.keys.elementAt(index);
-                    final voices = voicesByLang[lang]!;
+                    final voice = _voices[index];
+                    final isSelected = _currentVoice?.id == voice.id;
                     
-                    // Nombre del país
-                    final countryName = {
-                      'es': '🌐 Español',
-                      'es-MX': '🇲🇽 México',
-                      'es-ES': '🇪🇸 España',
-                      'es-CO': '🇨🇴 Colombia',
-                      'es-AR': '🇦🇷 Argentina',
-                      'es-CL': '🇨🇱 Chile',
-                      'es-PE': '🇵🇪 Perú',
-                      'es-VE': '🇻🇪 Venezuela',
-                      'en': '🇺🇸 English',
-                      'en-US': '🇺🇸 English (US)',
-                      'en-GB': '🇬🇧 English (UK)',
-                    }[lang] ?? '🌐 $lang';
-
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 12.0, horizontal: 4.0),
+                    // Determinar emoji e idioma
+                    String emoji;
+                    String langName;
+                    if (voice.lang.startsWith('es')) {
+                      emoji = '🇪🇸';
+                      langName = 'Español';
+                    } else if (voice.lang.startsWith('en')) {
+                      emoji = '🇺🇸';
+                      langName = 'English';
+                    } else {
+                      emoji = '🌐';
+                      langName = voice.lang.toUpperCase();
+                    }
+                    
+                    // Obtener el nombre amigable de la voz
+                    final voiceName = voice.name;
+                    
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      color: isSelected ? const Color(0xFF00D9FF).withOpacity(0.1) : const Color(0xFF2A2A2A),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: isSelected 
+                            ? const BorderSide(color: Color(0xFF00D9FF), width: 2)
+                            : BorderSide.none,
+                      ),
+                      child: ListTile(
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        leading: CircleAvatar(
+                          backgroundColor: isSelected 
+                              ? const Color(0xFF00D9FF) 
+                              : Colors.grey[700],
                           child: Text(
-                            countryName,
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: Color(0xFF00D9FF),
-                            ),
+                            emoji,
+                            style: const TextStyle(fontSize: 20),
                           ),
                         ),
-                        ...voices.map((voice) {
-                          // Extraer información de la voz
-                          final parts = voice.voiceCode.split('-');
-                          String displayName;
-                          String subtitle;
-                          IconData icon;
-                          
-                          // Detectar si es Female/Male para Google TTS
-                          if (voice.voiceCode.contains('Female')) {
-                            displayName = parts.length > 2 
-                                ? '${parts[1]} Femenina ${parts.last.replaceAll('Female', '')}'
-                                : 'Voz Femenina ${parts.last.replaceAll('Female', '')}';
-                            subtitle = '${voice.voiceCode} (Lenta/Clara)';
-                            icon = Icons.woman;
-                          } else if (voice.voiceCode.contains('Male')) {
-                            displayName = parts.length > 2
-                                ? '${parts[1]} Masculina ${parts.last.replaceAll('Male', '')}'
-                                : 'Voz Masculina ${parts.last.replaceAll('Male', '')}';
-                            subtitle = '${voice.voiceCode} (Normal/Rápida)';
-                            icon = Icons.man;
-                          } else {
-                            // Fallback para otras voces
-                            displayName = voice.voiceCode.split('-').last.replaceAll('Neural', '');
-                            subtitle = voice.voiceCode;
-                            icon = Icons.record_voice_over;
-                          }
-                          
-                          return ListTile(
-                            dense: true,
-                            leading: Icon(
-                              icon,
-                              color: _currentVoice?.id == voice.id
-                                  ? Theme.of(context).colorScheme.primary
-                                  : Colors.grey[600],
-                              size: 28,
-                            ),
-                            title: Text(
-                              displayName,
-                              style: TextStyle(
-                                fontWeight: _currentVoice?.id == voice.id 
-                                    ? FontWeight.bold 
-                                    : FontWeight.normal,
-                              ),
-                            ),
-                            subtitle: Text(
-                              subtitle, 
-                              style: const TextStyle(fontSize: 11),
-                            ),
-                            trailing: _currentVoice?.id == voice.id
-                                ? Icon(Icons.check_circle, color: Theme.of(context).colorScheme.primary)
-                                : null,
-                            onTap: () {
-                              _changeVoice(voice);
-                              Navigator.pop(context);
-                            },
-                          );
-                        }),
-                        const Divider(),
-                      ],
+                        title: Text(
+                          voiceName,
+                          style: TextStyle(
+                            fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                            fontSize: 16,
+                          ),
+                        ),
+                        subtitle: Text(
+                          langName,
+                          style: TextStyle(
+                            color: Colors.grey[400],
+                            fontSize: 13,
+                          ),
+                        ),
+                        trailing: isSelected
+                            ? const Icon(Icons.check_circle, color: Color(0xFF00D9FF), size: 28)
+                            : null,
+                        onTap: () {
+                          _changeVoice(voice);
+                          Navigator.pop(context);
+                        },
+                      ),
                     );
                   },
                 ),

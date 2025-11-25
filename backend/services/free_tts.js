@@ -1,19 +1,15 @@
 /**
  * Free TTS provider using google-tts-api (Google Translate TTS unofficial).
  * 
- * NOTA IMPORTANTE: Google TTS no soporta selección real de voces.
- * Todas las variantes de español mapean a 'es' en el API.
- * Los códigos de voz en la BD (es-MX-Female, es-ES-Male, etc.) son 
- * para la UI del usuario, pero el audio será el mismo 'es'.
+ * NOTA IMPORTANTE: Google TTS solo ofrece 2 variantes reales:
+ * - slow=false: Voz normal (velocidad estándar)
+ * - slow=true: Voz clara (velocidad lenta, más pausada)
  * 
- * En el futuro, se podría:
- * - Usar otro proveedor gratuito con más opciones (ElevenLabs, PlayHT, etc.)
- * - Implementar procesamiento de voz local (piper-tts, coqui-ai)
- * - Agregar efectos de audio para simular diferentes voces (pitch, speed)
+ * No soporta múltiples voces ni acentos diferentes.
+ * Todas las variantes de español usan la misma voz base de Google.
  */
 
 import googleTTS from 'google-tts-api';
-import { processAudioBuffer } from './audio_postprocess.js';
 
 /**
  * Mapea el código de voz a un idioma soportado por Google TTS.
@@ -46,32 +42,23 @@ function mapLang(voiceCode) {
   return 'es';
 }
 
-// Map voice codes to lightweight transform params for perceptual differentiation.
-// Adjust only small semitone changes to avoid artifacts.
-const VOICE_TRANSFORMS = {
-  // Female variants: slightly higher pitch
-  'es_female_1': { pitchSemitones: 0.8, speed: 1.0 },
-  'es_female_2': { pitchSemitones: 1.0, speed: 1.0 },
-  'es_female_3': { pitchSemitones: 1.2, speed: 0.98 },
-  'es_mx_female': { pitchSemitones: 1.0, speed: 0.99 },
-  'es_co_female': { pitchSemitones: 1.1, speed: 0.99 },
-  'es_ar_female': { pitchSemitones: 1.1, speed: 0.99 },
-  // Male variants: slightly lower pitch
-  'es_male_1': { pitchSemitones: -0.7, speed: 1.02 },
-  'es_male_2': { pitchSemitones: -0.9, speed: 1.03 },
-  'es_male_3': { pitchSemitones: -1.1, speed: 1.04 },
-  'es_mx_male': { pitchSemitones: -0.8, speed: 1.03 },
-  'es_co_male': { pitchSemitones: -0.8, speed: 1.03 },
-  'es_ar_male': { pitchSemitones: -0.8, speed: 1.03 },
+// Map voice codes to slow parameter
+// Google TTS solo tiene 2 opciones reales: normal (slow=false) y clara (slow=true)
+const VOICE_SLOW_MAP = {
+  // Español
+  'es_normal': false,      // Voz normal, velocidad estándar
+  'es_clara': true,        // Voz clara, velocidad lenta
+  // Inglés
+  'en_normal': false,      // Normal voice, standard speed
+  'en_clear': true,        // Clear voice, slow speed
 };
 
 export async function generateAudio(text, voiceCode, options = {}) {
   const lang = mapLang(voiceCode);
   
   // Determinar si es voz lenta (slow) basado en el código de voz
-  // Usamos slow=true para voces "Female" para diferenciarlas
-  const isFemale = voiceCode && voiceCode.toLowerCase().includes('female');
-  const slow = isFemale; // Las voces femeninas serán más lentas/claras
+  const normalizedVoiceCode = String(voiceCode || '').toLowerCase().replace(/-/g, '_');
+  const slow = VOICE_SLOW_MAP[normalizedVoiceCode] ?? false; // Default: voz normal
   
   console.log(`[Free TTS] Generando audio con idioma: ${lang}, voz: ${voiceCode}, slow: ${slow}`);
   console.log(`[Free TTS] Texto (${text.length} caracteres): "${text.substring(0, 80)}..."`);
@@ -104,19 +91,8 @@ export async function generateAudio(text, voiceCode, options = {}) {
   }
   
   // Concatenar MP3s: suficiente para streaming simple
-  let finalBuffer = Buffer.concat(buffers);
-  console.log(`[Free TTS] ✅ Audio generado (pre-proc): ${finalBuffer.length} bytes`);
-
-  // Apply post-processing for pitch/speed if transform exists
-  const transform = VOICE_TRANSFORMS[String(voiceCode || '').toLowerCase()];
-  if (transform) {
-    try {
-      finalBuffer = await processAudioBuffer(finalBuffer, transform);
-      console.log(`[Free TTS] 🎛️ Post-procesado aplicado (pitch/speed)`);
-    } catch (err) {
-      console.error('[Free TTS] Post-process failed, returning original buffer', err.message);
-    }
-  }
+  const finalBuffer = Buffer.concat(buffers);
+  console.log(`[Free TTS] ✅ Audio generado: ${finalBuffer.length} bytes (voz: ${slow ? 'clara/lenta' : 'normal'})`);
   return finalBuffer;
 }
 

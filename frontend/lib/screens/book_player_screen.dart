@@ -861,28 +861,32 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      backgroundColor: Colors.transparent,
       builder: (context) => DraggableScrollableSheet(
         initialChildSize: 0.7,
         minChildSize: 0.5,
         maxChildSize: 0.95,
         expand: false,
         builder: (context, scrollController) => Container(
-          padding: const EdgeInsets.all(16),
+          decoration: const BoxDecoration(
+            color: Color(0xFF1E1E1E),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: const EdgeInsets.all(24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Padding(
-                padding: EdgeInsets.all(8.0),
-                child: Text(
-                  'Seleccionar Voz',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                ),
+              const Text(
+                'Seleccionar Voz',
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
               ),
+              const SizedBox(height: 4),
               Text(
                 '${_voices.length} voces disponibles',
-                style: TextStyle(color: Colors.grey[600], fontSize: 14),
+                style: const TextStyle(color: Color(0xFFB0B0B0), fontSize: 14),
               ),
-              const Divider(),
+              const SizedBox(height: 16),
+              Divider(color: Colors.grey[800]),
               Expanded(
                 child: ListView.builder(
                   controller: scrollController,
@@ -910,12 +914,13 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
+                          padding: const EdgeInsets.symmetric(vertical: 12.0, horizontal: 4.0),
                           child: Text(
                             countryName,
                             style: const TextStyle(
                               fontSize: 16,
-                              fontWeight: FontWeight.bold,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF00D9FF),
                             ),
                           ),
                         ),
@@ -994,28 +999,32 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      backgroundColor: Colors.transparent,
       builder: (context) => DraggableScrollableSheet(
         initialChildSize: 0.6,
         minChildSize: 0.4,
         maxChildSize: 0.8,
         expand: false,
         builder: (context, scrollController) => Container(
-          padding: const EdgeInsets.all(16),
+          decoration: const BoxDecoration(
+            color: Color(0xFF1E1E1E),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: const EdgeInsets.all(24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Padding(
-                padding: EdgeInsets.all(8.0),
-                child: Text(
-                  'Velocidad de Reproducción',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                ),
+              const Text(
+                'Velocidad de Reproducción',
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
               ),
-              Text(
+              const SizedBox(height: 4),
+              const Text(
                 'Ajusta la velocidad de la narración',
-                style: TextStyle(color: Colors.grey[600], fontSize: 14),
+                style: TextStyle(color: Color(0xFFB0B0B0), fontSize: 14),
               ),
-              const Divider(),
+              const SizedBox(height: 16),
+              Divider(color: Colors.grey[800]),
               Expanded(
                 child: ListView.builder(
                   controller: scrollController,
@@ -1033,17 +1042,25 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
                       2.5: 'Ultra rápido',
                     }[speed] ?? '';
 
+                    final isSelected = _speed == speed;
+
                     return ListTile(
                       leading: Icon(
                         speed < 1.0 ? Icons.slow_motion_video : Icons.fast_forward,
-                        color: _speed == speed
-                            ? Theme.of(context).colorScheme.secondary
-                            : null,
+                        color: isSelected ? const Color(0xFF00D9FF) : Colors.grey,
                       ),
-                      title: Text('${speed.toStringAsFixed(2)}x'),
-                      subtitle: Text(description),
-                      trailing: _speed == speed
-                          ? Icon(Icons.check, color: Theme.of(context).colorScheme.secondary)
+                      title: Text(
+                        '${speed.toStringAsFixed(2)}x',
+                        style: TextStyle(
+                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                        ),
+                      ),
+                      subtitle: Text(
+                        description,
+                        style: const TextStyle(color: Color(0xFFB0B0B0)),
+                      ),
+                      trailing: isSelected
+                          ? const Icon(Icons.check_circle, color: Color(0xFF00D9FF))
                           : null,
                       onTap: () {
                         _changeSpeed(speed);
@@ -1064,28 +1081,40 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      backgroundColor: Colors.transparent,
       builder: (context) => DraggableScrollableSheet(
         initialChildSize: 0.7,
         minChildSize: 0.5,
         maxChildSize: 0.9,
         expand: false,
         builder: (context, scrollController) => Container(
-          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E1E1E),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: const EdgeInsets.all(24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Padding(
-                padding: EdgeInsets.all(8.0),
-                child: Text(
-                  'Partes del Audiolibro',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              const Text(
+                'Partes del Audiolibro',
+                style: TextStyle(
+                  fontSize: 24, 
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
                 ),
               ),
+              const SizedBox(height: 8),
               Text(
                 '${_playlist.length} ${_playlist.length == 1 ? "parte disponible" : "partes disponibles"}',
-                style: TextStyle(color: Colors.grey[600], fontSize: 14),
+                style: const TextStyle(
+                  color: Color(0xFFB0B0B0), 
+                  fontSize: 14,
+                ),
               ),
-              const Divider(),
+              const SizedBox(height: 16),
+              Divider(color: Colors.grey[800]),
+              const SizedBox(height: 8),
               Expanded(
                 child: ListView.builder(
                   controller: scrollController,
@@ -1097,8 +1126,8 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
                     return ListTile(
                       leading: CircleAvatar(
                         backgroundColor: isCurrent
-                            ? Theme.of(context).colorScheme.primary
-                            : Colors.grey[700],
+                            ? const Color(0xFF00D9FF)
+                            : const Color(0xFF2A2A2A),
                         child: Icon(
                           isPlaying ? Icons.volume_up : Icons.headphones,
                           color: Colors.white,
@@ -1109,6 +1138,7 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
                         'Parte ${index + 1}',
                         style: TextStyle(
                           fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                          color: Colors.white,
                         ),
                       ),
                       subtitle: Text(
@@ -1117,20 +1147,21 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
                             : 'Toca para reproducir',
                         style: TextStyle(
                           color: isCurrent 
-                              ? Theme.of(context).colorScheme.primary 
-                              : Colors.grey[600],
+                              ? const Color(0xFF00D9FF)
+                              : const Color(0xFFB0B0B0),
                           fontSize: 12,
                         ),
                       ),
                       trailing: isCurrent
-                          ? Icon(
-                              isPlaying ? Icons.pause_circle : Icons.play_circle,
-                              color: Theme.of(context).colorScheme.primary,
-                              size: 32,
+                          ? const Icon(
+                              Icons.check_circle,
+                              color: Color(0xFF00D9FF),
+                              size: 28,
                             )
                           : Icon(
                               Icons.play_arrow,
                               color: Colors.grey[600],
+                              size: 28,
                             ),
                       onTap: () async {
                         Navigator.pop(context);

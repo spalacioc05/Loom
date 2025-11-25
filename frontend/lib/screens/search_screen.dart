@@ -86,7 +86,10 @@ class _SearchScreenState extends State<SearchScreen> {
   Future<void> _showAddToLibraryDialog(Book book) async {
     if (_userId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Error: No se pudo obtener tu usuario')),
+        SnackBar(
+          content: const Text('Error: No se pudo obtener tu usuario'),
+          backgroundColor: Colors.red.shade900,
+        ),
       );
       return;
     }
@@ -95,6 +98,7 @@ class _SearchScreenState extends State<SearchScreen> {
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
           title: const Text('¿Quieres leer este libro?'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
@@ -108,7 +112,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 const SizedBox(height: 8),
                 Text(
                   book.autores.map((a) => a.nombre).join(', '),
-                  style: TextStyle(color: Colors.grey[700]),
+                  style: const TextStyle(color: Color(0xFFB0B0B0)),
                 ),
               ],
             ],
@@ -116,15 +120,20 @@ class _SearchScreenState extends State<SearchScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancelar'),
+              child: Text(
+                'Cancelar',
+                style: TextStyle(color: Colors.grey[400]),
+              ),
             ),
             ElevatedButton(
               onPressed: () => Navigator.of(context).pop(true),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Theme.of(context).colorScheme.primary,
+                backgroundColor: const Color(0xFF00D9FF),
                 foregroundColor: Colors.black,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
               ),
-              child: const Text('Aceptar'),
+              child: const Text('Aceptar', style: TextStyle(fontWeight: FontWeight.bold)),
             ),
           ],
         );
@@ -145,23 +154,16 @@ class _SearchScreenState extends State<SearchScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(message),
-            backgroundColor: Colors.green,
+            backgroundColor: Colors.green.shade800,
             duration: const Duration(seconds: 2),
           ),
         );
-
-        // Opcional: Navegar a la biblioteca (BooksScreen) y seleccionar la pestaña 1
-        // Esto asume que BooksScreen escucha el índice y recarga la biblioteca
-        // Si la navegación actual no permite esto, puede omitirse.
-        // Navigator.of(context).pushReplacement(
-        //   MaterialPageRoute(builder: (_) => const BooksScreen(initialTab: 1)),
-        // );
       } catch (e) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error: ${e.toString()}'),
-            backgroundColor: Colors.red,
+            backgroundColor: Colors.red.shade900,
           ),
         );
       }

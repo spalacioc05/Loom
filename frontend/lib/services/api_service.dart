@@ -76,22 +76,27 @@ class ApiService {
       );
       
       print('📡 Status code: ${response.statusCode}');
+      print('📦 Response body: ${response.body}');
       
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
         print('✅ Libros en biblioteca: ${data.length}');
+        if (data.isNotEmpty) {
+          print('📖 Primer libro: ${data[0]}');
+        }
         return data.map((json) => Book.fromJson(json)).toList();
       } else {
         print('❌ Error del servidor: ${response.statusCode}');
         print('Body: ${response.body}');
+        // NO retornar lista vacía, lanzar excepción para que se vea el error
         throw Exception(
           'Error al cargar biblioteca. Status: ${response.statusCode}',
         );
       }
     } catch (e) {
       print('❌ Excepción en fetchUserLibrary: $e');
-      // Retornar lista vacía en caso de error para evitar romper la UI
-      return [];
+      // LANZAR el error en lugar de retornar lista vacía
+      rethrow;
     }
   }
 

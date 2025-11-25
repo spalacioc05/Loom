@@ -13,24 +13,14 @@ class LoomBanner extends StatelessWidget {
       color:
           Theme.of(context).appBarTheme.backgroundColor ??
           Theme.of(context).colorScheme.surface,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            'Loom',
-            style: GoogleFonts.lora(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-              letterSpacing: 0.5,
-            ),
-          ),
-          const Icon(
-            Icons.notifications_none_rounded,
-            color: Colors.white,
-            size: 28,
-          ),
-        ],
+      child: Text(
+        'Loom',
+        style: GoogleFonts.lora(
+          fontSize: 24,
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+          letterSpacing: 0.5,
+        ),
       ),
     );
   }

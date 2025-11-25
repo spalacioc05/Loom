@@ -80,3 +80,54 @@ test_*.mp3
 
 # OneDrive (evitar conflictos)
 ~$*
+
+# ===================================
+# NODE.JS / BACKEND
+# ===================================
+node_modules/
+package-lock.json
+dist/
+build/
+
+# ===================================
+# FLUTTER / DART / FRONTEND
+# ===================================
+**/build/
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.packages
+**/.pub-cache/
+**/.pub/
+**/generated_plugin_registrant.dart
+*.g.dart
+
+# Android
+**/.gradle/
+**/android/app/build/
+**/android/.gradle/
+**/android/local.properties
+**/android/gradlew
+**/android/gradlew.bat
+**/android/gradle/wrapper/gradle-wrapper.jar
+**/android/key.properties
+**/*.jks
+**/*.keystore
+**/android/app/google-services.json
+
+# iOS
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/Flutter/Flutter.framework
+**/ios/Flutter/Flutter.podspec
+**/ios/.generated/
+**/ios/Runner.xcworkspace
+**/macos/Flutter/ephemeral/
+
+# Large binaries (GitHub limit: 100MB)
+*.apk
+*.aab
+*.ipa
+*.exe
+*.so
+*.dylib

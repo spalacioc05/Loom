@@ -1,0 +1,37 @@
+services:
+  # Backend Node.js
+  - type: web
+    name: loom-backend
+    env: node
+    region: ohio
+    plan: free
+    buildCommand: cd backend && npm install
+    startCommand: cd backend && node index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: TTS_PROVIDER
+        value: free
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: loom-redis
+          property: connectionString
+      - key: PORT
+        value: 10000
+    healthCheckPath: /health
+
+  # Redis Cache
+  - type: redis
+    name: loom-redis
+    plan: free
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []

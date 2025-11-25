@@ -4,7 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 import { generateAudio, estimateDuration } from '../services/tts_provider.js';
 import { enqueueBatch } from '../services/tts_queue.js';
 import { processPdf } from '../workers/process_pdf.js';
-// Redis cache removido - causaba problemas
+import redisCache from '../services/redis_cache.js';
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -27,6 +27,17 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 // GET /voices - Listar voces disponibles (tolerante si falta columna id)
 const getVoices = async (req, res) => {
   try {
+    // Intentar obtener del cache primero
+    const cacheKey = 'voices:all';
+    const cached = await redisCache.client?.get(cacheKey).catch(() => null);
+    
+    if (cached) {
+      console.log('🚀 [Redis Cache] ✅ Voces respondidas desde CACHE (instantáneo)');
+      return res.json(JSON.parse(cached));
+    }
+    
+    console.log('[Voices] 📊 Cache miss - consultando PostgreSQL...');
+
     let query = `SELECT id, proveedor, codigo_voz, idioma, configuracion, activo FROM tbl_voces WHERE activo = true ORDER BY idioma, codigo_voz`;
     let result;
     try {
@@ -53,6 +64,10 @@ const getVoices = async (req, res) => {
     if (!voices.length) {
       console.warn('[Voices] No se encontraron voces activas. Verifica inserciones en migración.');
     }
+
+    // Cachear voces por 24 horas
+    await redisCache.client?.setex(cacheKey, 60 * 60 * 24, JSON.stringify(voices)).catch(() => {});
+    console.log('💾 [Redis Cache] Voces cacheadas (TTL: 24h)');
 
     res.json(voices);
   } catch (error) {
@@ -453,6 +468,15 @@ const getBookAudios = async (req, res) => {
 
     console.log(`\n📚 [BookAudios] Libro ${libroId}, autoGen=${autoGenerate}, voiceId=${voiceId?.substring(0, 8)}...`);
 
+    // Si no se solicita auto-generación, intentar obtener del cache
+    if (!autoGenerate && voiceId) {
+      const cachedList = await redisCache.getBookAudiosList(libroId, voiceId);
+      if (cachedList) {
+        console.log(`[BookAudios] ✅ Respondiendo desde cache (${cachedList.length} audios)`);
+        return res.json(cachedList);
+      }
+    }
+
     console.log(`[BookAudios] Consultando BD...`);
 
     // Obtener documento_id del libro
@@ -637,6 +661,11 @@ const getBookAudios = async (req, res) => {
       audios,
       generation_mode: wantsFull ? 'full' : (numericGenerate > 0 ? `partial:${numericGenerate}` : 'none')
     };
+
+    // Cachear respuesta si no se está auto-generando (datos estables)
+    if (!autoGenerate && voiceId && conAudio > 0) {
+      await redisCache.cacheBookAudiosList(libroId, voiceId, response).catch(() => {});
+    }
 
     res.json(response);
   } catch (error) {

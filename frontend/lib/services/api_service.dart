@@ -17,13 +17,36 @@ class ApiService {
     _cacheTime = null;
   }
 
-  // Obtiene base URL - TEMPORAL: URL FIJA PARA DEBUGGING
+  // Obtiene base URL - Soporta producción y desarrollo
   static Future<String> resolveBaseUrl() async {
-    // TEMP: Forzar IP local conocida para dispositivo físico.
-    // Cambia esta IP si tu PC tiene otra (mírala en la consola del backend).
-    const forced = 'http://172.23.32.1:3000';
-    print('🌐 Usando baseUrl forzada: $forced');
-    return forced;
+    // URL de producción en Render (ACTUALIZAR con tu URL real)
+    const production = 'https://loom-backend.onrender.com';
+    
+    // URL de desarrollo local
+    const development = 'http://172.23.32.1:3000';
+    
+    // Auto-detectar: si estás en modo release, usar producción
+    // Si no, revisar si es Android y usar la IP local
+    String baseUrl;
+    
+    try {
+      // Intentar detectar si estamos en modo release
+      const bool isRelease = bool.fromEnvironment('dart.vm.product');
+      
+      if (isRelease) {
+        baseUrl = production;
+        print('🚀 Modo PRODUCCIÓN - usando: $production');
+      } else {
+        baseUrl = development;
+        print('🏠 Modo DESARROLLO - usando: $development');
+      }
+    } catch (e) {
+      // Fallback a desarrollo si hay error
+      baseUrl = development;
+      print('⚠️ Error detectando modo, usando desarrollo: $development');
+    }
+    
+    return baseUrl;
   }
 
 

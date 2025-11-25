@@ -9,22 +9,47 @@ class RedisCache {
 
   async initialize() {
     try {
-      this.client = new Redis({
-        host: process.env.REDIS_HOST || 'localhost',
-        port: parseInt(process.env.REDIS_PORT || '6379', 10),
-        password: process.env.REDIS_PASSWORD,
-        db: 0,
-        retryStrategy: (times) => {
-          if (times > 3) {
-            console.warn('[Redis Cache] ⚠️ Desconectando después de 3 intentos fallidos');
-            return null;
-          }
-          return Math.min(times * 200, 2000);
-        },
-        maxRetriesPerRequest: 3,
-        enableReadyCheck: true,
-        lazyConnect: false,
-      });
+      // Soportar REDIS_URL para Render o configuración local
+      const redisUrl = process.env.REDIS_URL;
+      
+      if (redisUrl) {
+        // Producción: usar REDIS_URL de Render
+        console.log('[Redis Cache] 🌐 Conectando con REDIS_URL...');
+        this.client = new Redis(redisUrl, {
+          maxRetriesPerRequest: 3,
+          enableReadyCheck: true,
+          retryStrategy: (times) => {
+            if (times > 3) {
+              console.warn('[Redis Cache] ⚠️ Desconectando después de 3 intentos fallidos');
+              return null;
+            }
+            return Math.min(times * 200, 2000);
+          },
+          // TLS para Render Redis
+          tls: process.env.NODE_ENV === 'production' ? {
+            rejectUnauthorized: false
+          } : undefined,
+        });
+      } else {
+        // Desarrollo: configuración local
+        console.log('[Redis Cache] 🏠 Conectando a Redis local...');
+        this.client = new Redis({
+          host: process.env.REDIS_HOST || 'localhost',
+          port: parseInt(process.env.REDIS_PORT || '6379', 10),
+          password: process.env.REDIS_PASSWORD,
+          db: 0,
+          retryStrategy: (times) => {
+            if (times > 3) {
+              console.warn('[Redis Cache] ⚠️ Desconectando después de 3 intentos fallidos');
+              return null;
+            }
+            return Math.min(times * 200, 2000);
+          },
+          maxRetriesPerRequest: 3,
+          enableReadyCheck: true,
+          lazyConnect: false,
+        });
+      }
 
       this.client.on('connect', () => {
         console.log('[Redis Cache] 🔗 Conectando...');

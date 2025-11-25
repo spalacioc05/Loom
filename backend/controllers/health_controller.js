@@ -1,6 +1,7 @@
 import sql from '../db/client.js';
 import pkg from 'pg';
 const { Pool } = pkg;
+import redisCache from '../services/redis_cache.js';
 
 // Usamos pg Pool solo para comprobar compatibilidad con el otro cliente si se desea.
 // Si DATABASE_URL no existe, devolvemos estado degradado.
@@ -47,5 +48,14 @@ export async function healthCheck(req, res) {
     has_region: !!process.env.AZURE_SPEECH_REGION,
   };
   report.checks.queue_enabled = process.env.QUEUE_ENABLED !== 'false';
+  
+  // Redis Cache stats
+  try {
+    const redisStats = await redisCache.getStats();
+    report.checks.redis_cache = redisStats;
+  } catch (e) {
+    report.checks.redis_cache = { ok: false, error: e.message };
+  }
+  
   res.status(report.ok ? 200 : 500).json(report);
 }

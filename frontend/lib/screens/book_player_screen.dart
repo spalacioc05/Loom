@@ -33,6 +33,7 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
   List<PlaylistItem> _playlist = [];
   int _currentIndex = 0;
   bool _loadingSegment = false;
+  bool _isTransitioning = false; // Flag para prevenir múltiples transiciones simultáneas
   Timer? _autosaveTimer;
   String? _documentoId; // UUID del documento real (no el libro_id)
   bool _addedToLibrary = false; // Para rastrear si ya se agregó a la biblioteca
@@ -53,8 +54,11 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
       final voices = await TtsService.instance.getVoices();
       print('   ✅ ${voices.length} voces cargadas');
       
-      // Seleccionar primera voz por defecto
-      Voice current = voices.first;
+      // Seleccionar "es-Normal" como voz por defecto (español normal)
+      Voice current = voices.firstWhere(
+        (v) => v.voiceCode == 'es-Normal',
+        orElse: () => voices.first, // Fallback a primera voz si no se encuentra
+      );
       print('   Voz seleccionada: ${current.voiceCode}');
       
       // Cargar progreso previo si existe
@@ -83,23 +87,6 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
         _saveProgress();
         print('🔚 Segmento completado, intentando avanzar...');
         _playNext();
-      }
-    });
-
-    // Supervisar playerState para capturar fin antes de que entre en completed (algunos backends)
-    _player.playerStateStream.listen((playerState) {
-      final processing = playerState.processingState;
-      if (processing == ProcessingState.ready) {
-        // Si estamos muy cerca del final (posición ~ duración) y aún no disparó completed
-        final dur = _player.duration;
-        final pos = _player.position;
-        if (dur != null && pos >= dur - const Duration(milliseconds: 500)) {
-          // Evitar doble avance si ya está reproduciendo siguiente
-          if (!_player.playing) {
-            print('⏭️ Auto-avance anticipado (posición ≈ duración)');
-            _playNext();
-          }
-        }
       }
     });
 
@@ -484,8 +471,15 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
         }).toList();
         
         setState(() => _playlist = items);
+        
         // Añadir nuevos audios al source gapless para próximas transiciones instantáneas
         _appendGaplessNew();
+        
+        // Reconfigurar gapless si es necesario
+        if (_gaplessSource == null && items.where((i) => i.url.toString().isNotEmpty).length > 3) {
+          _setupGaplessPlaylist();
+        }
+        
         print('Playlist actualizada: $audiosGenerados/$totalSegmentos audios generados');
       }
       
@@ -579,6 +573,37 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
       print('Gapless init error: $e');
     });  
   }
+  
+  /// Configura playlist gapless completa con todos los audios disponibles
+  void _setupGaplessPlaylist() {
+    final sources = <AudioSource>[];
+    _gaplessAdded.clear();
+    
+    for (int i = 0; i < _playlist.length; i++) {
+      final url = _playlist[i].url.toString();
+      if (url.isNotEmpty) {
+        sources.add(AudioSource.uri(Uri.parse(url)));
+        _gaplessAdded.add(i);
+      }
+    }
+    
+    if (sources.isEmpty) {
+      print('⚠️ No hay audios para configurar gapless');
+      return;
+    }
+    
+    print('🎵 Configurando playlist gapless con ${sources.length} audios');
+    _gaplessSource = ConcatenatingAudioSource(
+      children: sources,
+      useLazyPreparation: true, // Preparar bajo demanda para mejor performance
+    );
+    
+    // Configurar como fuente principal del player
+    _player.setAudioSource(_gaplessSource!, initialIndex: _currentIndex).catchError((e) {
+      print('❌ Error configurando gapless: $e');
+      return null; // Retornar null en caso de error
+    });
+  }
 
   void _appendGaplessNew() {
     if (_gaplessSource == null) return;
@@ -593,11 +618,36 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
 
   Future<void> _loadAndPlay(int index) async {
     if (index < 0 || index >= _playlist.length) return;
+    
+    // Proteger contra llamadas múltiples
+    if (_loadingSegment) {
+      print('⚠️ Ya está cargando un segmento, ignorando...');
+      return;
+    }
+    
     setState(() => _loadingSegment = true);
     try {
-      await _player.setSpeed(_speed);
-      await _player.setUrl(_playlist[index].url.toString());
-      // Guardar progreso (segmento actual, intra 0) inmediatamente para futuras sesiones
+      // Si tenemos gapless source y el índice está cargado, usar seek (FLUIDO)
+      if (_gaplessSource != null && _gaplessAdded.contains(index)) {
+        print('⚡ Reproducción FLUIDA - seek a índice $index');
+        await _player.seek(Duration.zero, index: index);
+        setState(() => _currentIndex = index);
+        
+        // Si no estaba reproduciendo, iniciar
+        if (!_player.playing) {
+          await _player.play();
+        }
+      } else {
+        // Fallback: reproducir audio individual (CON PAUSA)
+        print('🔄 Carga tradicional - índice $index');
+        await _player.stop();
+        await _player.setSpeed(_speed);
+        await _player.setUrl(_playlist[index].url.toString());
+        setState(() => _currentIndex = index);
+        await _player.play();
+      }
+      
+      // Guardar progreso
       final effectiveDocId = _documentoId ?? widget.book.id;
       final progress = PlayProgress(
         documentId: effectiveDocId,
@@ -607,8 +657,6 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
         globalOffsetChar: null,
       );
       await TtsService.instance.saveProgress(progress);
-      await _player.play();
-      setState(() => _currentIndex = index);
       // Guardar progreso nuevamente con posición real tras iniciar (posición probablemente ~0)
       _saveProgress();
       
@@ -669,37 +717,48 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
   }
 
   Future<void> _playNext() async {
-    // Buscar el siguiente audio disponible (con URL válida)
-    // Si tenemos fuente gapless y siguiente índice ya está precargado, usar seek instantáneo
-    if (_gaplessSource != null) {
-      final nextIndex = _currentIndex + 1;
-      if (_gaplessAdded.contains(nextIndex)) {
-        print('⚡ Gapless seek a índice $nextIndex');
-        await _player.seek(Duration.zero, index: nextIndex);
-        setState(() => _currentIndex = nextIndex);
-        _saveProgress();
-        // Verificar prefetch y generación adicional
-        _checkAndGenerateAhead(nextIndex);
-        return;
-      }
-    }
-
-    for (int i = _currentIndex + 1; i < _playlist.length; i++) {
-      if (_playlist[i].url.toString().isNotEmpty) {
-        print('▶️ Reproduciendo siguiente audio (índice $i)...');
-        await _loadAndPlay(i);
-        _saveProgress();
-        return;
-      }
+    // Prevenir múltiples llamadas simultáneas
+    if (_isTransitioning) {
+      print('⏸️ Ya está en transición, ignorando _playNext...');
+      return;
     }
     
-    // No hay más audios disponibles, esperar a que se generen
-    print('⏸️ No hay más audios generados, solicitando generación adicional...');
-    // Solicitar generación de más audios (buffer de 5)
-    if (_currentVoice != null) {
-      await TtsService.instance.generateMore(widget.book.intId, _currentVoice!.id, count: 5);
+    _isTransitioning = true;
+    try {
+      // Buscar el siguiente audio disponible (con URL válida)
+      // Si tenemos fuente gapless y siguiente índice ya está precargado, usar seek instantáneo
+      if (_gaplessSource != null) {
+        final nextIndex = _currentIndex + 1;
+        if (_gaplessAdded.contains(nextIndex)) {
+          print('⚡ Gapless seek a índice $nextIndex');
+          await _player.seek(Duration.zero, index: nextIndex);
+          setState(() => _currentIndex = nextIndex);
+          _saveProgress();
+          // Verificar prefetch y generación adicional
+          _checkAndGenerateAhead(nextIndex);
+          return;
+        }
+      }
+
+      for (int i = _currentIndex + 1; i < _playlist.length; i++) {
+        if (_playlist[i].url.toString().isNotEmpty) {
+          print('▶️ Reproduciendo siguiente audio (índice $i)...');
+          await _loadAndPlay(i);
+          _saveProgress();
+          return;
+        }
+      }
+      
+      // No hay más audios disponibles, esperar a que se generen
+      print('⏸️ No hay más audios generados, solicitando generación adicional...');
+      // Solicitar generación de más audios (buffer de 5)
+      if (_currentVoice != null) {
+        await TtsService.instance.generateMore(widget.book.intId, _currentVoice!.id, count: 5);
+      }
+      _waitForNextAudioAndPlay(_currentIndex + 1);
+    } finally {
+      _isTransitioning = false;
     }
-    _waitForNextAudioAndPlay(_currentIndex + 1);
   }
   
   /// Espera a que el siguiente audio esté disponible y lo reproduce

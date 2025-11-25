@@ -18,12 +18,14 @@ class TtsService {
 
   /// Obtiene las voces reales del backend (`GET /voices`).
   Future<List<Voice>> getVoices() async {
+    print('[TTS] 🔍 Solicitando voces al backend...');
     final baseUrl = await _baseUrl;
     final uri = Uri.parse('$baseUrl/voices');
     final resp = await http.get(uri).timeout(const Duration(seconds: 8));
     if (resp.statusCode != 200) {
       throw Exception('Error obteniendo voces: ${resp.statusCode} ${resp.body}');
     }
+    print('[TTS] ✅ Voces obtenidas del backend');
     final List<dynamic> data = jsonDecode(resp.body);
     return data.map((e) => Voice.fromJson(e as Map<String, dynamic>)).toList();
   }

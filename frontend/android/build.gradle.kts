@@ -1,4 +1,5 @@
 plugins {
+    // Solo declaramos google-services sin forzar versión de AGP/Kotlin (Flutter ya las gestiona)
     id("com.google.gms.google-services") version "4.4.3" apply false
 }
 

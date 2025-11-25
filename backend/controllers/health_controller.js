@@ -46,7 +46,6 @@ export async function healthCheck(req, res) {
     has_key: !!process.env.AZURE_SPEECH_KEY,
     has_region: !!process.env.AZURE_SPEECH_REGION,
   };
-  // Redis queue status (lazy)
   report.checks.queue_enabled = process.env.QUEUE_ENABLED !== 'false';
   res.status(report.ok ? 200 : 500).json(report);
 }

@@ -208,18 +208,58 @@ class _SearchScreenState extends State<SearchScreen> {
                 child: FutureBuilder<List<Book>>(
                   future: _booksFuture,
                   builder: (context, snapshot) {
+                    // Estados iniciales y de carga
                     if (snapshot.connectionState == ConnectionState.waiting) {
                       return const Center(child: CircularProgressIndicator());
-                      } else if (snapshot.hasError) {
+                    }
+                    // Error: mostrar mensaje y botón de reintento
+                    if (snapshot.hasError) {
+                      return Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.error_outline, size: 56, color: Colors.redAccent),
+                            const SizedBox(height: 12),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                              child: Text(
+                                'No se pudieron cargar los libros. Verifica conexión al backend.',
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(fontSize: 16, color: Colors.redAccent),
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            ElevatedButton.icon(
+                              onPressed: () {
+                                setState(() { _booksFuture = ApiService.fetchBooks(); });
+                              },
+                              icon: const Icon(Icons.refresh),
+                              label: const Text('Reintentar'),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+                    if (snapshot.hasData) {
+                      final books = snapshot.data!;
+                      if (books.isEmpty) {
                         return Center(
-                          child: Text(
-                            'Error al cargar libros: ${snapshot.error}',
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(color: Colors.redAccent),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(Icons.menu_book, size: 72, color: Colors.white70),
+                              const SizedBox(height: 12),
+                              const Text('No hay libros disponibles todavía.', style: TextStyle(fontSize: 16, color: Colors.white70)),
+                              const SizedBox(height: 8),
+                              ElevatedButton.icon(
+                                onPressed: () { setState(() { _booksFuture = ApiService.fetchBooks(); }); },
+                                icon: const Icon(Icons.refresh),
+                                label: const Text('Actualizar'),
+                              )
+                            ],
                           ),
                         );
-                    } else if (snapshot.hasData) {
-                      final books = snapshot.data!;
+                      }
                       // Filtrar por categoría seleccionada (si no es 'General')
                       final selectedCat = (_selectedCategoryIndex >= 0 && _selectedCategoryIndex < categories.length)
                         ? categories[_selectedCategoryIndex]
@@ -247,7 +287,7 @@ class _SearchScreenState extends State<SearchScreen> {
                                 const Icon(Icons.search_off, size: 64, color: Colors.white70),
                                 const SizedBox(height: 12),
                                 Text(
-                                  'No se encontraron resultados para "${_query}"',
+                                  'No se encontraron resultados para "$_query"',
                                   textAlign: TextAlign.center,
                                   style: const TextStyle(fontSize: 16, color: Colors.white70),
                                 ),

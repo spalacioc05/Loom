@@ -23,7 +23,7 @@ class _BooksScreenState extends State<BooksScreen> {
   late int _selectedIndex;
   Future<List<Book>>? _booksFuture;
   String? _userId;
-  int _libraryFilter = 0; // 0 todos, 1 subidos por mi, 2 en progreso
+  int _libraryFilter = 0; // 0 todos, 1 subidos por mi
 
   @override
   void initState() {
@@ -49,6 +49,7 @@ class _BooksScreenState extends State<BooksScreen> {
       );
       
       _userId = userId;
+      print('👤 Usuario actual (_userId): $_userId');
       
       // Cargar biblioteca personal del usuario
       setState(() {
@@ -59,8 +60,41 @@ class _BooksScreenState extends State<BooksScreen> {
     }
   }
 
+  Future<void> _loadAllBooks() async {
+    try {
+      // Obtener el userId para el filtro
+      final user = GoogleAuthService().currentUser;
+      if (user == null) {
+        print('⚠️ No hay usuario logueado');
+        return;
+      }
+      
+      // Obtener id_usuario del backend
+      final userId = await ApiService.ensureUser(
+        firebaseUid: user.uid,
+        email: user.email,
+        displayName: user.displayName ?? 'Usuario',
+      );
+      
+      _userId = userId;
+      print('👤 Usuario actual (_userId): $_userId');
+      
+      // Cargar TODOS los libros disponibles
+      setState(() {
+        _booksFuture = ApiService.fetchBooks();
+      });
+    } catch (e) {
+      print('❌ Error al cargar todos los libros: $e');
+    }
+  }
+
   void _refreshBooks() {
-    _loadUserLibrary();
+    // Cargar según el filtro activo
+    if (_libraryFilter == 1) {
+      _loadAllBooks();
+    } else {
+      _loadUserLibrary();
+    }
   }
 
   @override
@@ -85,10 +119,16 @@ class _BooksScreenState extends State<BooksScreen> {
           ),
           // Barra de filtros tipo categorías
           CategoryCarousel(
-            categories: const ['Todos', 'Mis subidos', 'En progreso'],
+            categories: const ['Todos', 'Mis subidos'],
             selectedIndex: _libraryFilter,
             onCategorySelected: (i) {
               setState(() => _libraryFilter = i);
+              // Recargar datos según el filtro
+              if (i == 1) {
+                _loadAllBooks(); // "Mis subidos" - cargar todos los libros
+              } else {
+                _loadUserLibrary(); // "Todos" - cargar biblioteca
+              }
             },
           ),
           Expanded(
@@ -136,10 +176,47 @@ class _BooksScreenState extends State<BooksScreen> {
                         }
                         List<Book> filtered = books;
                         if (_libraryFilter == 1 && _userId != null) {
+                          print('🔍 Filtrando "Mis subidos": _userId = $_userId');
+                          print('📚 Total libros disponibles: ${books.length}');
+                          for (var book in books) {
+                            print('  - ${book.titulo}: uploaderId="${book.uploaderId}" (match: ${book.uploaderId == _userId})');
+                          }
                           filtered = books.where((b) => b.uploaderId == _userId).toList();
-                        } else if (_libraryFilter == 2) {
-                          filtered = books.where((b) => (b.progreso ?? 0) > 0).toList();
+                          print('✅ Libros subidos por mí: ${filtered.length}');
+                        } else {
+                          print('📚 Mostrando todos los libros de la biblioteca: ${books.length}');
                         }
+                        
+                        // Si no hay resultados después del filtro, mostrar mensaje
+                        if (filtered.isEmpty) {
+                          String mensaje = 'No hay libros en esta categoría';
+                          if (_libraryFilter == 1) {
+                            mensaje = 'No has subido ningún libro aún';
+                          }
+                          return Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.library_books_outlined,
+                                  size: 80,
+                                  color: Colors.grey[400],
+                                ),
+                                const SizedBox(height: 24),
+                                Text(
+                                  mensaje,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w500,
+                                    color: Colors.grey[600],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }
+                        
                         return GridView.builder(
                           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                           gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(

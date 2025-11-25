@@ -166,7 +166,13 @@ export async function addToUserLibrary(req, res) {
 			SELECT 1 FROM tbl_libros_x_usuarios WHERE id_usuario = ${userId}::bigint AND id_libro = ${bookId}::bigint LIMIT 1
 		`;
 		if (exists.length > 0) {
-			return res.status(200).json({ message: 'El libro ya estaba en tu biblioteca' });
+			// Si ya existe, actualizar fecha_ultima_lectura para marcarlo como "en progreso"
+			await sql`
+				UPDATE tbl_libros_x_usuarios 
+				SET fecha_ultima_lectura = NOW()
+				WHERE id_usuario = ${userId}::bigint AND id_libro = ${bookId}::bigint
+			`;
+			return res.status(200).json({ message: 'Libro actualizado en tu biblioteca' });
 		}
 
 		await sql`
@@ -267,6 +273,8 @@ export async function uploadBook(req, res) {
 	// Identificador del usuario que sube el libro (opcional pero recomendado)
 	// Acepta 'userId' o 'id_usuario' como alias y también cabecera 'x-user-id'
 	const rawUserId = req.body.userId || req.body.id_usuario || req.headers['x-user-id'];
+	console.log('📤 Upload iniciado con userId:', rawUserId);
+	console.log('   Título:', titulo);
 		const pdfFile = req.files?.pdf?.[0];
 		const portadaFile = req.files?.portada?.[0];
 
@@ -464,6 +472,7 @@ export async function uploadBook(req, res) {
 
 		const newBook = result[0];
 		console.log('✅ Libro insertado exitosamente:', newBook.id_libro);
+		console.log('   id_uploader del libro:', newBook.id_uploader);
 
 		// Insertar relaciones con categorías
 		console.log('Insertando categorías para el libro...');
@@ -476,12 +485,19 @@ export async function uploadBook(req, res) {
 		console.log(`✅ ${categoriasIds.length} categoría(s) asociada(s)`);
 
 		// Lanzar segmentación en background (no bloquear la respuesta)
+		console.log('🔄 Iniciando procesamiento de PDF en background...');
 		try {
 			processPdf(newBook.id_libro)
-				.then(() => console.log('✅ Segmentación completada para libro', newBook.id_libro))
-				.catch(err => console.error('❌ Segmentación falló:', err.message));
+				.then(() => {
+					console.log(`✅ Segmentación completada para libro ${newBook.id_libro}`);
+				})
+				.catch(err => {
+					console.error(`❌ ERROR SEGMENTACIÓN libro ${newBook.id_libro}:`, err.message);
+					console.error('   Stack:', err.stack);
+				});
 		} catch (e) {
-			console.warn('⚠️ No se pudo lanzar segmentación en background:', e.message);
+			console.error('❌ ERROR lanzando segmentación:', e.message);
+			console.error('   Stack:', e.stack);
 		}
 
 		// Si tenemos userId, agregar a la biblioteca del usuario automáticamente

@@ -22,6 +22,11 @@ app.use(express.json());
 
 app.use('/', authRoute);
 
+// Endpoint simple de salud para detección desde frontend
+app.get('/ping', (req, res) => {
+  res.status(200).json({ status: 'ok' });
+});
+
 app.listen(PORT, '0.0.0.0', async () => {
   // Obtener IP local de la PC
   const networkInterfaces = os.networkInterfaces();

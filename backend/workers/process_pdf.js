@@ -242,7 +242,6 @@ async function processPdf(libroId) {
     console.log(`   Total segmentos: ${chunks.length}`);
     console.log(`   Estado: listo\n`);
 
-    // 11. Encolar generación inicial para todas las voces activas (si Redis está disponible)
     try {
       const voicesRes = await pool.query(`SELECT id FROM tbl_voces WHERE activo = true`);
       const voiceIds = voicesRes.rows.map(r => r.id);

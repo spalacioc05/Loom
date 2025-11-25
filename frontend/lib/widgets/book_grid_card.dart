@@ -171,24 +171,77 @@ class _BookGridCardState extends State<BookGridCard> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-              child: AspectRatio(
-                aspectRatio: 1,
-                child: book.portada != null && book.portada!.isNotEmpty
-                    ? ClipRRect(
-                        borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
-                        child: Image.network(
-                          book.portada!,
-                          fit: BoxFit.cover,
-                          width: double.infinity,
-                        ),
-                      )
-                    : Container(
+              child: Stack(
+                children: [
+                  AspectRatio(
+                    aspectRatio: 1,
+                    child: book.portada != null && book.portada!.isNotEmpty
+                        ? ClipRRect(
+                            borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
+                            child: Image.network(
+                              book.portada!,
+                              fit: BoxFit.cover,
+                              width: double.infinity,
+                            ),
+                          )
+                        : Container(
+                            decoration: BoxDecoration(
+                              color: Colors.grey[300],
+                              borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
+                            ),
+                            child: const Center(child: Icon(Icons.book, size: 48)),
+                          ),
+                  ),
+                  // Barra de progreso si existe progreso > 0
+                  if (book.progreso != null && book.progreso! > 0)
+                    Positioned(
+                      bottom: 0,
+                      left: 0,
+                      right: 0,
+                      child: Container(
+                        height: 4,
                         decoration: BoxDecoration(
-                          color: Colors.grey[300],
-                          borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
+                          color: Colors.black.withOpacity(0.3),
                         ),
-                        child: const Center(child: Icon(Icons.book, size: 48)),
+                        child: FractionallySizedBox(
+                          alignment: Alignment.centerLeft,
+                          widthFactor: (book.progreso! / 100).clamp(0.0, 1.0),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).colorScheme.primary,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
+                                  blurRadius: 4,
+                                )
+                              ],
+                            ),
+                          ),
+                        ),
                       ),
+                    ),
+                  // Badge de porcentaje en esquina superior derecha si hay progreso
+                  if (book.progreso != null && book.progreso! > 0)
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.7),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          '${book.progreso!.toInt()}%',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
             Padding(

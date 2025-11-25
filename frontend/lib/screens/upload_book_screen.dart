@@ -115,8 +115,18 @@ class _UploadBookScreenState extends State<UploadBookScreen> {
       // Obtener userId del backend para asociar libro a su biblioteca
       String? userId;
       try {
-        userId = await GoogleAuthService().getBackendUserId();
-      } catch (_) {}
+        final user = GoogleAuthService().currentUser;
+        if (user != null) {
+          userId = await ApiService.ensureUser(
+            firebaseUid: user.uid,
+            email: user.email,
+            displayName: user.displayName ?? 'Usuario',
+          );
+          print('👤 Subiendo libro con userId: $userId');
+        }
+      } catch (e) {
+        print('⚠️ No se pudo obtener userId: $e');
+      }
 
       await ApiService.uploadBook(
         titulo: _tituloController.text,

@@ -21,6 +21,13 @@ import {
 } from '../controllers/tts_controllers.js';
 import multer from 'multer';
 import { healthCheck } from '../controllers/health_controller.js';
+import { processPdf } from '../workers/process_pdf.js';
+import pkg from 'pg';
+const { Pool } = pkg;
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+});
 
 const router = Router();
 
@@ -94,5 +101,55 @@ router.post('/progress', saveProgress);
 
 // Obtener último progreso
 router.get('/progress', getProgress);
+
+// === ADMIN: Re-procesar libros ===
+// Re-procesar un libro específico o todos los que no tengan segmentos
+router.post('/admin/reprocess-books', async (req, res) => {
+  try {
+    const { libroId } = req.body;
+    
+    if (libroId) {
+      // Re-procesar libro específico
+      console.log(`🔄 Re-procesando libro ${libroId}...`);
+      processPdf(libroId)
+        .then(() => console.log(`✅ Libro ${libroId} re-procesado`))
+        .catch(err => console.error(`❌ Error re-procesando libro ${libroId}:`, err));
+      
+      res.json({ message: `Libro ${libroId} encolado para re-procesamiento` });
+    } else {
+      // Buscar todos los libros sin segmentos usando pool
+      const result = await pool.query(`
+        SELECT l.id_libro, l.titulo
+        FROM tbl_libros l
+        LEFT JOIN tbl_documentos d ON l.id_libro = d.libro_id
+        LEFT JOIN tbl_segmentos s ON d.id = s.documento_id
+        WHERE l.archivo IS NOT NULL
+        GROUP BY l.id_libro, l.titulo
+        HAVING COUNT(s.id) = 0 OR MAX(d.estado) IN ('error', 'procesando')
+      `);
+      
+      const libros = result.rows;
+      console.log(`📋 Encontrados ${libros.length} libros sin segmentos`);
+      
+      for (const libro of libros) {
+        console.log(`🔄 Encolando libro ${libro.id_libro}: ${libro.titulo}`);
+        processPdf(libro.id_libro)
+          .then(() => console.log(`✅ Libro ${libro.id_libro} procesado`))
+          .catch(err => console.error(`❌ Error libro ${libro.id_libro}:`, err.message));
+        
+        // Delay de 2s entre libros para no saturar
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+      
+      res.json({ 
+        message: `${libros.length} libros encolados para procesamiento`,
+        libros: libros.map(l => ({ id: l.id_libro, titulo: l.titulo }))
+      });
+    }
+  } catch (error) {
+    console.error('Error en reprocess-books:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 export default router;

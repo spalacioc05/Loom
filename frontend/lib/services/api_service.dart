@@ -7,61 +7,39 @@ import '../models/book.dart';
 /// Servicio para consumir la API de libros.
 class ApiService {
   static String? _cachedBaseUrl;
+  static DateTime? _cacheTime;
+  static const _cacheDuration = Duration(minutes: 5); // Expirar cache después de 5 minutos
 
-  // Obtiene base URL resolviendo varias opciones con probe rápido
+  /// Resetea el cache de URL para forzar re-detección
+  static void resetCache() {
+    print('🔄 Reseteando cache de URL...');
+    _cachedBaseUrl = null;
+    _cacheTime = null;
+  }
+
+  // Obtiene base URL - TEMPORAL: URL FIJA PARA DEBUGGING
   static Future<String> resolveBaseUrl() async {
-    if (_cachedBaseUrl != null) return _cachedBaseUrl!;
-
-    const env = String.fromEnvironment('API_BASE_URL');
-    if (env.isNotEmpty) {
-      if (await _probe(env)) {
-        _cachedBaseUrl = env;
-        return env;
-      }
-    }
-
-    final candidates = <String>[
-      // Tu IP local PRIMERO (para dispositivo físico)
-      'http://192.168.1.6:3000',
-      // Emulador Android
-      'http://10.0.2.2:3000',
-      // Fallbacks
-      'http://localhost:3000',
-      'http://127.0.0.1:3000',
-    ];
-
-    for (final base in candidates) {
-      print('🔍 Probando: $base');
-      final ok = await _probe(base);
-      if (ok) {
-        print('✅ Conectado a: $base');
-        _cachedBaseUrl = base;
-        return base;
-      }
-    }
-
-  // Si nada funcionó, usar IP local por defecto
-  print('⚠️ No se pudo probar ninguna URL, usando IP local por defecto');
-  _cachedBaseUrl = 'http://192.168.1.6:3000';
-    return _cachedBaseUrl!;
+    // TEMP: Forzar IP local conocida para dispositivo físico.
+    // Cambia esta IP si tu PC tiene otra (mírala en la consola del backend).
+    const forced = 'http://172.23.32.1:3000';
+    print('🌐 Usando baseUrl forzada: $forced');
+    return forced;
   }
 
-  static Future<bool> _probe(String base) async {
-    try {
-      final uri = Uri.parse('$base/ping');
-      final resp = await http.get(uri).timeout(const Duration(seconds: 1));
-      return resp.statusCode == 200;
-    } catch (_) {
-      return false;
-    }
-  }
 
   /// Obtiene la lista de libros desde el backend.
   static Future<List<Book>> fetchBooks() async {
     try {
       final baseUrl = await resolveBaseUrl();
       print('📚 Cargando libros desde: $baseUrl/disponibles');
-      final response = await http.get(Uri.parse('$baseUrl/disponibles'));
+      final response = await http.get(
+        Uri.parse('$baseUrl/disponibles')
+      ).timeout(
+        const Duration(seconds: 15),
+        onTimeout: () {
+          throw Exception('Timeout: El servidor no responde');
+        },
+      );
       print('   Status code: ${response.statusCode}');
       
       if (response.statusCode == 200) {
@@ -71,13 +49,13 @@ class ApiService {
       } else {
         print('❌ Error al cargar libros: ${response.statusCode}');
         print('   Body: ${response.body}');
-        throw Exception(
-          'Error al cargar los libros. Status: ${response.statusCode}',
-        );
+        // Devolver lista vacía para que la UI no se quede congelada
+        return [];
       }
     } catch (e) {
       print('❌ Excepción en fetchBooks: $e');
-      rethrow;
+      // Devolver lista vacía en errores para finalizar future
+      return [];
     }
   }
 

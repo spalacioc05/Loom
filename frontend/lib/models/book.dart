@@ -10,6 +10,7 @@ class Book {
   final int? palabras;
   final String? uploaderId; // id del usuario que subió el libro
   final double? progreso; // progreso del usuario en su biblioteca (0-100)
+  final DateTime? fechaUltimaLectura; // fecha de última lectura del usuario
   final List<Author> autores;
   final List<Genre> generos;
   final List<Category> categorias;
@@ -25,6 +26,7 @@ class Book {
     this.palabras,
     this.uploaderId,
     this.progreso,
+    this.fechaUltimaLectura,
   this.autores = const [],
   this.generos = const [],
   this.categorias = const [],
@@ -51,6 +53,9 @@ class Book {
         ? (json['progreso'] is num 
             ? (json['progreso'] as num).toDouble() 
             : double.tryParse(json['progreso'].toString()))
+        : null,
+      fechaUltimaLectura: json['fecha_ultima_lectura'] != null
+        ? DateTime.parse(json['fecha_ultima_lectura'])
         : null,
       autores: json['autores'] != null 
         ? (json['autores'] as List).map((a) => Author.fromJson(a)).toList()

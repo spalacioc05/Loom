@@ -57,9 +57,12 @@ export default function LoomLandingPage() {
               <Button
                 size="lg"
                 className="bg-cyan-500 hover:bg-cyan-600 text-white px-8 py-6 text-lg rounded-xl shadow-lg shadow-cyan-500/25"
+                asChild
               >
-                <Download className="size-5 mr-2" />
-                {"Descargar APK"}
+                <a href="https://drive.google.com/file/d/1UydmEmdu9hTri2ZBnocvNypEZ2g729wp/view?usp=sharing" target="_blank" rel="noopener noreferrer">
+                  <Download className="size-5 mr-2" />
+                  {"Descargar APK"}
+                </a>
               </Button>
 
             </div>
@@ -232,9 +235,12 @@ export default function LoomLandingPage() {
                   <Button
                     size="lg"
                     className="bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white px-12 py-7 text-xl rounded-xl shadow-2xl shadow-cyan-500/25"
+                    asChild
                   >
-                    <Download className="size-6 mr-3" />
-                    {"Descargar APK"}
+                    <a href="https://drive.google.com/file/d/1UydmEmdu9hTri2ZBnocvNypEZ2g729wp/view?usp=sharing" target="_blank" rel="noopener noreferrer">
+                      <Download className="size-6 mr-3" />
+                      {"Descargar APK"}
+                    </a>
                   </Button>
                   <p className="text-sm text-gray-500 mt-4">{"Compatible con Android 8.0 o superior"}</p>
                 </div>

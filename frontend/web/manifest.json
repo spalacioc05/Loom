@@ -1,6 +1,6 @@
 {
-    "name": "frontend",
-    "short_name": "frontend",
+    "name": "Loom",
+    "short_name": "Loom",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

@@ -2,6 +2,13 @@ import pkg from 'pg';
 const { Pool } = pkg;
 import { createClient } from '@supabase/supabase-js';
 import { generateAudio, estimateDuration } from '../services/tts_provider.js';
+
+// Asegurar duración en ms como entero finito
+function safeDurationMs(text, rate) {
+  const ms = estimateDuration(text, rate);
+  if (Number.isFinite(ms) && ms >= 0) return Math.round(ms);
+  return 0;
+}
 import { enqueueBatch } from '../services/tts_queue.js';
 import { processPdf } from '../workers/process_pdf.js';
 import redisCache from '../services/redis_cache.js';
@@ -24,7 +31,39 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// GET /voices - Listar voces disponibles (tolerante si falta columna id)
+// Utilidades para clasificar voces GCP
+function getStyleFromVoiceCode(code) {
+  if (!code) return 'Standard';
+  if (code.includes('Neural2')) return 'Neural2';
+  if (code.includes('Wavenet')) return 'Wavenet';
+  if (code.includes('Studio')) return 'Studio';
+  return 'Standard';
+}
+
+function getGenderFromVoiceCode(code) {
+  if (!code) return 'NEUTRAL';
+  const last = code.charAt(code.length - 1).toUpperCase();
+  if (['A', 'C', 'E'].includes(last)) return 'FEMALE';
+  if (['B', 'D', 'F'].includes(last)) return 'MALE';
+  return 'NEUTRAL';
+}
+
+// Retry helper for transient operations (async function)
+async function retryAsync(fn, attempts = 2, delayMs = 500) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      console.warn(`[Retry] intento ${i + 1} falló: ${err.message || err}`);
+      if (i < attempts - 1) await new Promise(r => setTimeout(r, delayMs));
+    }
+  }
+  throw lastErr;
+}
+
+// GET /voices - Listar voces disponibles (solo GCP, condensadas por idioma+estilo con M/F)
 const getVoices = async (req, res) => {
   try {
     // Intentar obtener del cache primero
@@ -38,7 +77,7 @@ const getVoices = async (req, res) => {
     
     console.log('[Voices] 📊 Cache miss - consultando PostgreSQL...');
 
-    let query = `SELECT id, proveedor, codigo_voz, idioma, configuracion, activo FROM tbl_voces WHERE activo = true ORDER BY idioma, codigo_voz`;
+    let query = `SELECT id, proveedor, codigo_voz, idioma, configuracion, activo FROM tbl_voces WHERE proveedor = 'gcp' AND activo = true ORDER BY idioma, codigo_voz`;
     let result;
     try {
       result = await pool.query(query);
@@ -46,20 +85,80 @@ const getVoices = async (req, res) => {
       // Si la columna id no existe (migración incompleta), intentamos sin id
       if (/(column \"id\" does not exist)/i.test(err.message)) {
         console.warn('[Voices] Columna id ausente, usando fallback sin id. Revisa migración de tbl_voces.');
-        result = await pool.query(`SELECT proveedor, codigo_voz, idioma, configuracion, activo FROM tbl_voces WHERE activo = true ORDER BY idioma, codigo_voz`);
+        result = await pool.query(`SELECT proveedor, codigo_voz, idioma, configuracion, activo FROM tbl_voces WHERE proveedor = 'gcp' AND activo = true ORDER BY idioma, codigo_voz`);
       } else {
         throw err;
       }
     }
 
-    const voices = result.rows.map((row, idx) => ({
-      id: row.id || `${row.proveedor}:${row.codigo_voz}:${idx}`, // Fallback si no hay id
+    // Construir lista condensada: por (lang, style) elegir 1 femenina y 1 masculina si existen
+    const rawVoices = result.rows.map((row, idx) => ({
+      id: row.id || `${row.proveedor}:${row.codigo_voz}:${idx}`,
       provider: row.proveedor,
       voice_code: row.codigo_voz,
       lang: row.idioma,
       settings_json: row.configuracion,
       active: row.activo,
+      style: getStyleFromVoiceCode(row.codigo_voz),
+      gender: getGenderFromVoiceCode(row.codigo_voz)
     }));
+
+    // Agrupar por (idioma|estilo) y seleccionar como máximo 1 femenina y 1 masculina.
+    // Mantener neutrales como fallback si falta alguno de los dos géneros.
+    const grouped = new Map(); // key: `${lang}|${style}` -> { female?: voice, male?: voice, neutrals: [] }
+    for (const v of rawVoices) {
+      const key = `${v.lang}|${v.style}`;
+      if (!grouped.has(key)) grouped.set(key, { female: null, male: null, neutrals: [] });
+      const entry = grouped.get(key);
+      if (v.gender === 'FEMALE' && !entry.female) entry.female = v;
+      else if (v.gender === 'MALE' && !entry.male) entry.male = v;
+      else entry.neutrals.push(v);
+    }
+
+    // Usar neutrales como fallback si falta femenino o masculino (sin duplicar la misma voz)
+    for (const [key, entry] of grouped.entries()) {
+      if (!entry.female && entry.neutrals.length > 0) {
+        // Tomar la primera neutral disponible como femenina si no existe
+        entry.female = entry.neutrals.shift();
+      }
+      if (!entry.male && entry.neutrals.length > 0) {
+        // Tomar la siguiente neutral disponible como masculina si no existe
+        entry.male = entry.neutrals.shift();
+      }
+    }
+
+    // Aplanar resultados en orden por idioma y estilo
+    const voices = [];
+    const sorter = (a, b) => String(a).localeCompare(String(b));
+    const keysSorted = Array.from(grouped.keys()).sort(sorter);
+    for (const key of keysSorted) {
+      const [lang, style] = key.split('|');
+      const entry = grouped.get(key);
+      if (entry.female) {
+        voices.push({
+          id: entry.female.id,
+          provider: entry.female.provider,
+          voice_code: entry.female.voice_code,
+          lang,
+          style,
+          gender: 'FEMALE',
+          settings_json: entry.female.settings_json,
+          active: entry.female.active,
+        });
+      }
+      if (entry.male) {
+        voices.push({
+          id: entry.male.id,
+          provider: entry.male.provider,
+          voice_code: entry.male.voice_code,
+          lang,
+          style,
+          gender: 'MALE',
+          settings_json: entry.male.settings_json,
+          active: entry.male.active,
+        });
+      }
+    }
 
     if (!voices.length) {
       console.warn('[Voices] No se encontraron voces activas. Verifica inserciones en migración.');
@@ -77,10 +176,10 @@ const getVoices = async (req, res) => {
 };
 
 // POST /api/tts/playlist - Generar playlist de segmentos
-// Body: { document_id?, libro_id?, voice_id, from_offset_char? }
+// Body: { document_id?, libro_id?, voice_id, from_offset_char?, start_segment_id?, preferExisting?, generateFirstIfMissing? }
 const getPlaylist = async (req, res) => {
   try {
-    let { document_id, libro_id, voice_id, from_offset_char } = req.body;
+    let { document_id, libro_id, voice_id, from_offset_char, start_segment_id, preferExisting, generateFirstIfMissing } = req.body;
 
     if (!document_id && !libro_id) {
       return res.status(400).json({ error: 'Debes enviar document_id (UUID) o libro_id' });
@@ -125,10 +224,10 @@ const getPlaylist = async (req, res) => {
     }
 
     // Determinar segmento inicial por offset o usar el primero
-    let startSegmentId = null;
+    let startSegmentId = start_segment_id || null;
     let startIntraMs = 0;
 
-    if (from_offset_char != null) {
+    if (!startSegmentId && from_offset_char != null) {
       const segResult = await pool.query(
         `SELECT id FROM tbl_segmentos 
          WHERE documento_id = $1 
@@ -171,8 +270,42 @@ const getPlaylist = async (req, res) => {
       duration_ms: row.duracion_ms || null,
     }));
 
+    // Si se solicita, generar sincrónicamente el primer segmento si falta (para no reiniciar al cambiar voz)
+    if (items.length > 0 && !items[0].url && generateFirstIfMissing) {
+      const seg0 = items[0];
+      const segData = await pool.query('SELECT texto, orden FROM tbl_segmentos WHERE id = $1', [seg0.segment_id]);
+      const voiceData = await pool.query('SELECT codigo_voz, configuracion FROM tbl_voces WHERE id = $1', [voice_id]);
+      if (segData.rows.length && voiceData.rows.length) {
+        const texto = segData.rows[0].texto;
+        const orden = segData.rows[0].orden;
+        const vcode = voiceData.rows[0].codigo_voz;
+        const vconf = voiceData.rows[0].configuracion || {};
+        // Intentar generar y subir con reintentos para errores transitorios
+        const { publicUrl } = await retryAsync(async () => {
+          const audioBuffer = await generateAudio(texto, vcode, vconf);
+          const safeVoice = (vcode || 'voz').replace(/[^a-zA-Z0-9_-]/g, '_');
+          const fileName = `libro_${libroId || 'doc'}/voz_${safeVoice}/segmento_${orden}.mp3`;
+          const { error: uploadError } = await supabase.storage.from('audios_tts').upload(fileName, audioBuffer, { contentType: 'audio/mpeg', upsert: true });
+          if (uploadError) throw uploadError;
+          const { data: urlData } = supabase.storage.from('audios_tts').getPublicUrl(fileName);
+          return { publicUrl: urlData.publicUrl };
+        }, 2, 800);
+
+        const duracion = safeDurationMs(texto, vconf.rate);
+        await pool.query(
+          `INSERT INTO tbl_audios (documento_id, segmento_id, voz_id, audio_url, duracion_ms, last_access_at, access_count)
+           VALUES ($1, $2, $3, $4, $5, NOW(), 1)
+           ON CONFLICT (documento_id, segmento_id, voz_id)
+           DO UPDATE SET audio_url = EXCLUDED.audio_url, duracion_ms = EXCLUDED.duracion_ms, last_access_at = NOW()`,
+          [document_id, seg0.segment_id, voice_id, publicUrl, duracion]
+        );
+        seg0.url = publicUrl;
+        seg0.duration_ms = duracion;
+      }
+    }
+
     // Encolar generación de los siguientes 10 segmentos en background (precarga inteligente)
-    if (items.length > 0) {
+    if (items.length > 0 && !preferExisting) {
       const firstSegmentOrder = await pool.query(
         'SELECT orden FROM tbl_segmentos WHERE id = $1',
         [items[0].segment_id]
@@ -291,7 +424,7 @@ const getSegmentAudio = async (req, res) => {
     // Generar audio con Azure TTS
     console.log(`[TTS] Generando con voz: ${voiceCode}`);
     const audioBuffer = await generateAudio(texto, voiceCode, config);
-    const durationMs = estimateDuration(texto, config.rate);
+    const durationMs = safeDurationMs(texto, config.rate);
 
     // Subir a Supabase Storage
     const fileName = `tts/${doc}/${voice}/${segment}.mp3`;
@@ -342,12 +475,8 @@ const getSegmentAudio = async (req, res) => {
 const saveProgress = async (req, res) => {
   try {
     const { document_id, voice_id, segment_id, intra_ms, global_offset_char } = req.body;
-    // Intentar obtener id_usuario (BIGINT) desde cabecera 'x-user-id' para vincular progreso a biblioteca.
-    // tbl_progreso.usuario_id es UUID; si recibimos un ID numérico lo mapeamos a UUID placeholder estable.
     const headerUser = req.headers['x-user-id'];
     const userIdNum = headerUser ? Number(headerUser) : null;
-    const isUuid = typeof headerUser === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(headerUser);
-    const progresoUsuarioId = isUuid ? headerUser : '00000000-0000-0000-0000-000000000000';
 
     if (!document_id || !voice_id || segment_id == null || intra_ms == null) {
       return res.status(400).json({ 
@@ -355,25 +484,7 @@ const saveProgress = async (req, res) => {
       });
     }
 
-    try {
-      await pool.query(
-      `INSERT INTO tbl_progreso 
-       (usuario_id, documento_id, voz_id, segmento_id, intra_ms, offset_global_char, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, NOW())
-       ON CONFLICT (usuario_id, documento_id, voz_id)
-       DO UPDATE SET 
-         segmento_id = EXCLUDED.segmento_id,
-         intra_ms = EXCLUDED.intra_ms,
-         offset_global_char = EXCLUDED.offset_global_char,
-         updated_at = NOW()`,
-      [progresoUsuarioId, document_id, voice_id, segment_id, intra_ms, global_offset_char]
-    );
-    } catch (e) {
-      console.error('[Progreso] Error insertando en tbl_progreso:', e.message);
-      return res.status(500).json({ error: 'Error guardando progreso', detail: e.message });
-    }
-
-    // Si recibimos id_usuario válido y podemos resolver libro_id, actualizar biblioteca del usuario
+    // Guardar progreso directamente en tbl_libros_x_usuarios (no usamos tbl_progreso)
     if (userIdNum && Number.isFinite(userIdNum)) {
       try {
         const docRes = await pool.query('SELECT libro_id FROM tbl_documentos WHERE id = $1 LIMIT 1', [document_id]);
@@ -402,10 +513,15 @@ const saveProgress = async (req, res) => {
                progreso = GREATEST(tbl_libros_x_usuarios.progreso, $3)`,
             [userIdNum, libroId, porcentajeProgreso]
           );
+          
+          console.log(`✅ Progreso guardado: Usuario ${userIdNum}, Libro ${libroId}, ${porcentajeProgreso}%`);
         }
       } catch (e) {
-        console.warn('[Progreso] No se pudo actualizar biblioteca del usuario:', e.message);
+        console.error('[Progreso] Error actualizando biblioteca:', e.message);
+        return res.status(500).json({ error: 'Error guardando progreso', detail: e.message });
       }
+    } else {
+      console.warn('[Progreso] No se recibió id_usuario válido, no se guardó progreso');
     }
 
     res.json({ success: true });
@@ -419,18 +535,29 @@ const saveProgress = async (req, res) => {
 const getProgress = async (req, res) => {
   try {
     const { doc } = req.query;
-    const usuario_id = req.user?.id || '00000000-0000-0000-0000-000000000000'; // TODO: usar auth real
+    const headerUser = req.headers['x-user-id'];
+    const userIdNum = headerUser ? Number(headerUser) : null;
 
     if (!doc) {
       return res.status(400).json({ error: 'Parámetro doc es requerido' });
     }
 
+    if (!userIdNum || !Number.isFinite(userIdNum)) {
+      return res.json(null); // Sin usuario válido, sin progreso
+    }
+
+    // Obtener progreso desde tbl_libros_x_usuarios
+    const docRes = await pool.query('SELECT libro_id FROM tbl_documentos WHERE id = $1 LIMIT 1', [doc]);
+    if (docRes.rows.length === 0) {
+      return res.json(null);
+    }
+
+    const libroId = docRes.rows[0].libro_id;
     const result = await pool.query(
-      `SELECT voz_id, segmento_id, intra_ms, offset_global_char
-       FROM tbl_progreso
-       WHERE usuario_id = $1 AND documento_id = $2
+      `SELECT progreso FROM tbl_libros_x_usuarios
+       WHERE id_usuario = $1 AND id_libro = $2
        LIMIT 1`,
-      [usuario_id, doc]
+      [userIdNum, libroId]
     );
 
     if (result.rows.length === 0) {
@@ -440,10 +567,7 @@ const getProgress = async (req, res) => {
     const prog = result.rows[0];
     res.json({
       document_id: doc,
-      voice_id: prog.voz_id,
-      segment_id: prog.segmento_id,
-      intra_ms: prog.intra_ms,
-      global_offset_char: prog.offset_global_char,
+      progress_percent: prog.progreso || 0
     });
   } catch (error) {
     console.error('Error obteniendo progreso:', error);
@@ -535,13 +659,48 @@ const getBookAudios = async (req, res) => {
       voiceCode = vozResult.rows[0].codigo_voz;
       voiceConfig = vozResult.rows[0].configuracion || {};
     } else {
-      // Obtener voz por defecto
-      const vozResult = await pool.query(
-        'SELECT id, codigo_voz, configuracion FROM tbl_voces WHERE activo = true LIMIT 1'
+      // Intentar seleccionar por defecto: preferir explicitamente 'es-ES-Wavenet-E' si existe
+      let vozResult = await pool.query(
+        `SELECT id, codigo_voz, configuracion FROM tbl_voces
+         WHERE proveedor = 'gcp' AND activo = true AND codigo_voz = 'es-ES-Wavenet-E' LIMIT 1`
       );
-      
+
+      // Si no existe, seguir con la heurística previa: GCP femenina español
       if (vozResult.rows.length === 0) {
-        return res.status(500).json({ error: 'No hay voces configuradas' });
+        vozResult = await pool.query(
+          `SELECT id, codigo_voz, configuracion FROM tbl_voces
+           WHERE proveedor = 'gcp' AND activo = true AND codigo_voz LIKE 'es-%' AND substring(codigo_voz from '.{1}$') IN ('A','C','E')
+           LIMIT 1`
+        );
+      }
+
+      // Si no se encontró, buscar cualquier GCP femenina
+      if (vozResult.rows.length === 0) {
+        vozResult = await pool.query(
+          `SELECT id, codigo_voz, configuracion FROM tbl_voces
+           WHERE proveedor = 'gcp' AND activo = true AND substring(codigo_voz from '.{1}$') IN ('A','C','E')
+           LIMIT 1`
+        );
+      }
+
+      // Si todavía no hay, tomar cualquier GCP activa
+      if (vozResult.rows.length === 0) {
+        vozResult = await pool.query(
+          `SELECT id, codigo_voz, configuracion FROM tbl_voces
+           WHERE proveedor = 'gcp' AND activo = true
+           LIMIT 1`
+        );
+      }
+
+      // Fallback: cualquier voz activa
+      if (vozResult.rows.length === 0) {
+        const fallback = await pool.query(
+          'SELECT id, codigo_voz, configuracion FROM tbl_voces WHERE activo = true LIMIT 1'
+        );
+        if (fallback.rows.length === 0) {
+          return res.status(500).json({ error: 'No hay voces configuradas' });
+        }
+        vozResult = fallback;
       }
 
       vozId = vozResult.rows[0].id;
@@ -559,7 +718,7 @@ const getBookAudios = async (req, res) => {
         a.duracion_ms
        FROM tbl_segmentos s
        LEFT JOIN tbl_audios a ON a.segmento_id = s.id AND a.voz_id = $2
-       WHERE s.documento_id = $1 AND s.orden > 0
+       WHERE s.documento_id = $1 AND s.orden >= 0
        ORDER BY s.orden ASC`,
       [documentoId, vozId]
     );
@@ -616,7 +775,7 @@ const getBookAudios = async (req, res) => {
               const { data: urlData } = supabase.storage
                 .from('audios_tts')
                 .getPublicUrl(fileName);
-              const duracion = estimateDuration(seg.texto, voiceConfig.rate);
+              const duracion = safeDurationMs(seg.texto, voiceConfig.rate);
               await pool.query(
                 `INSERT INTO tbl_audios (documento_id, segmento_id, voz_id, audio_url, duracion_ms, last_access_at, access_count)
                  VALUES ($1, $2, $3, $4, $5, NOW(), 1)
@@ -696,7 +855,16 @@ const quickStartBook = async (req, res) => {
     );
 
     if (docResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Documento no encontrado para este libro' });
+      // Si no existe documento aún, disparar segmentación en background y responder 202
+      (async () => {
+        try {
+          await processPdf(parseInt(libroId, 10));
+          console.log(`[QuickStart] Segmentación encolada para libro ${libroId}`);
+        } catch (e) {
+          console.error(`[QuickStart] Error encolando segmentación para libro ${libroId}:`, e.message || e);
+        }
+      })();
+      return res.status(202).json({ message: 'Documento/segmentos no listos. Segmentación iniciada. Reintenta en unos segundos.' });
     }
 
     const documentoId = docResult.rows[0].id;
@@ -706,18 +874,27 @@ const quickStartBook = async (req, res) => {
       return res.status(400).json({ error: 'El documento está en estado de error' });
     }
 
-    // 2. Obtener el PRIMER segmento (orden > 0, skipping metadata)
+    // 2. Obtener el PRIMER segmento (orden >= 0, todos los segmentos)
     const firstSegResult = await pool.query(
       `SELECT s.id, s.orden, s.texto 
        FROM tbl_segmentos s
-       WHERE s.documento_id = $1 AND s.orden > 0
+       WHERE s.documento_id = $1 AND s.orden >= 0
        ORDER BY s.orden ASC
        LIMIT 1`,
       [documentoId]
     );
 
     if (firstSegResult.rows.length === 0) {
-      return res.status(404).json({ error: 'No hay segmentos disponibles para este libro' });
+      // No hay segmentos aún: lanzar segmentación en background y devolver 202
+      (async () => {
+        try {
+          await processPdf(parseInt(libroId, 10));
+          console.log(`[QuickStart] Segmentación encolada (no había segmentos) para libro ${libroId}`);
+        } catch (e) {
+          console.error(`[QuickStart] Error encolando segmentación para libro ${libroId}:`, e.message || e);
+        }
+      })();
+      return res.status(202).json({ message: 'No hay segmentos todavía. Segmentación iniciada. Reintenta en unos segundos.' });
     }
 
     const firstSegment = firstSegResult.rows[0];
@@ -752,34 +929,33 @@ const quickStartBook = async (req, res) => {
       
       try {
         // Generar audio
-        const audioBuffer = await generateAudio(
-          firstSegment.texto,
-          voice.codigo_voz,
-          voice.configuracion || {}
-        );
+        // Generar y subir con reintentos en caso de fallos transitorios
+        const { publicUrl } = await retryAsync(async () => {
+          const audioBuffer = await generateAudio(
+            firstSegment.texto,
+            voice.codigo_voz,
+            voice.configuracion || {}
+          );
+          // Subir a Supabase Storage
+          const safeVoice = (voice.codigo_voz || 'voz').replace(/[^a-zA-Z0-9_-]/g, '_');
+          const fileName = `libro_${libroId}/voz_${safeVoice}/segmento_${firstSegment.orden}.mp3`;
+          const { error: uploadError } = await supabase.storage
+            .from('audios_tts')
+            .upload(fileName, audioBuffer, {
+              contentType: 'audio/mpeg',
+              upsert: true
+            });
+          if (uploadError) throw uploadError;
+          const { data: urlData } = supabase.storage
+            .from('audios_tts')
+            .getPublicUrl(fileName);
+          return { publicUrl: urlData.publicUrl };
+        }, 2, 800);
 
-  // Subir a Supabase Storage
-  // Importante: incluir la voz en la ruta para no sobreescribir entre voces
-  const safeVoice = (voice.codigo_voz || 'voz').replace(/[^a-zA-Z0-9_-]/g, '_');
-  const fileName = `libro_${libroId}/voz_${safeVoice}/segmento_${firstSegment.orden}.mp3`;
-        const { error: uploadError } = await supabase.storage
-          .from('audios_tts')
-          .upload(fileName, audioBuffer, {
-            contentType: 'audio/mpeg',
-            upsert: true
-          });
-
-        if (uploadError) throw uploadError;
-
-        // Obtener URL pública
-        const { data: urlData } = supabase.storage
-          .from('audios_tts')
-          .getPublicUrl(fileName);
-        
-        firstAudioUrl = urlData.publicUrl;
+        firstAudioUrl = publicUrl;
 
         // Estimar duración
-        const duracion = estimateDuration(firstSegment.texto, (voice.configuracion || {}).rate);
+        const duracion = safeDurationMs(firstSegment.texto, (voice.configuracion || {}).rate);
 
         // Guardar en BD
         await pool.query(
@@ -836,7 +1012,7 @@ const quickStartBook = async (req, res) => {
               });
 
               const { data: urlData } = supabase.storage.from('audios_tts').getPublicUrl(fileName);
-              const duracion = estimateDuration(seg.texto, (voice.configuracion || {}).rate);
+              const duracion = safeDurationMs(seg.texto, (voice.configuracion || {}).rate);
 
               await pool.query(
                 `INSERT INTO tbl_audios (documento_id, segmento_id, voz_id, audio_url, duracion_ms, last_access_at, access_count)

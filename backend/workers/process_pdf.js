@@ -179,8 +179,40 @@ async function processPdf(libroId) {
     // 5. Limpiar metadatos/portada: saltar los primeros ~3000 caracteres
     // que usualmente contienen: título, autor, índice, copyright, portada, etc.
     const SKIP_CHARS = 3000; // Ajustable según necesidad
-    const cleanedText = fullText.length > SKIP_CHARS ? fullText.substring(SKIP_CHARS) : fullText;
+    let cleanedText = fullText.length > SKIP_CHARS ? fullText.substring(SKIP_CHARS) : fullText;
     const skippedChars = fullText.length - cleanedText.length;
+
+    // 5b. Sanitizar metadatos residuales en todo el texto (headers/footers, URLs, ISBN, copyright)
+    function sanitizeText(input) {
+      const lines = input.split(/\r?\n/);
+      const out = [];
+      const metaRegexes = [
+        /^\s*Página\s+\d+(\s+de\s+\d+)?\s*$/i,
+        /^\s*Cap[ií]tulo\s+\w+\s*$/i,
+        /^\s*(ÍNDICE|CONTENIDO)\s*$/i,
+        /ISBN\s*[:\d-]+/i,
+        /copyright|©/i,
+        /https?:\/\/\S+/i,
+        /www\.[^\s]+/i,
+      ];
+      const isAllCapsShort = (s) => {
+        const t = s.trim();
+        return t.length > 0 && t.length <= 40 && /[A-ZÁÉÍÓÚÑ]/.test(t) && t === t.toUpperCase();
+      };
+      const isPageNumberOnly = (s) => /^\s*\d+\s*$/.test(s) || /^\s*(i{1,5}|v?i{0,3}|x{1,3})\s*$/i.test(s);
+      for (const line of lines) {
+        const l = line.trim();
+        if (!l) continue;
+        if (metaRegexes.some((re) => re.test(l))) continue;
+        if (isAllCapsShort(l)) continue;
+        if (isPageNumberOnly(l)) continue;
+        out.push(line);
+      }
+      // También remover múltiples espacios y normalizar
+      return out.join('\n').replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n');
+    }
+
+    cleanedText = sanitizeText(cleanedText);
     
     console.log(`Omitiendo primeros ${skippedChars} caracteres (metadatos/portada)`);
     console.log(`Texto limpio: ${cleanedText.length} caracteres`);

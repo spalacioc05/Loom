@@ -6,7 +6,7 @@ const pdfParse = require('pdf-parse');
 import { PDFDocument } from 'pdf-lib';
 import { processPdf } from '../workers/process_pdf.js';
 
-// Obtener todos los libros disponibles con autores, géneros y categorías
+// Obtener todos los libros disponibles con categorías
 export async function getAllBooks(req, res) {
 	try {
 		const books = await sql`
@@ -22,27 +22,11 @@ export async function getAllBooks(req, res) {
 				l.id_uploader as uploader_id,
 				COALESCE(
 					json_agg(
-						DISTINCT jsonb_build_object('id', a.id_autor, 'nombre', a.nombre)
-					) FILTER (WHERE a.id_autor IS NOT NULL),
-					'[]'
-				) as autores,
-				COALESCE(
-					json_agg(
-						DISTINCT jsonb_build_object('id', g.id_genero, 'nombre', g.nombre)
-					) FILTER (WHERE g.id_genero IS NOT NULL),
-					'[]'
-				) as generos,
-				COALESCE(
-					json_agg(
 						DISTINCT jsonb_build_object('id', c.id_categoria, 'nombre', c.nombre)
 					) FILTER (WHERE c.id_categoria IS NOT NULL),
 					'[]'
 				) as categorias
 			FROM tbl_libros l
-			LEFT JOIN tbl_libros_x_autores la ON l.id_libro = la.id_libro
-			LEFT JOIN tbl_autores a ON la.id_autor = a.id_autor
-			LEFT JOIN tbl_libros_x_generos lg ON l.id_libro = lg.id_libro
-			LEFT JOIN tbl_generos g ON lg.id_genero = g.id_genero
 			LEFT JOIN tbl_libros_x_categorias lc ON l.id_libro = lc.id_libro
 			LEFT JOIN tbl_categorias c ON lc.id_categoria = c.id_categoria
 			WHERE COALESCE(l.eliminado, false) = false
@@ -52,7 +36,11 @@ export async function getAllBooks(req, res) {
 		res.json(books);
 	} catch (error) {
 		console.error('Error fetching books:', error);
-		res.status(500).json({ error: 'Error fetching books' });
+		console.error('Error details:', error.message);
+		res.status(500).json({ 
+			error: 'Error fetching books', 
+			details: error.message 
+		});
 	}
 }
 
@@ -68,7 +56,24 @@ export async function getCategories(req, res) {
 		res.json(categorias);
 	} catch (error) {
 		console.error('Error fetching categories:', error);
-		res.status(500).json({ error: 'Error fetching categories' });
+		console.error('Error details:', error.message);
+		
+		// Si la tabla no existe, devolver categorías por defecto
+		if (error.message && error.message.includes('does not exist')) {
+			console.log('⚠️ La tabla tbl_categorias no existe. Devolviendo categorías por defecto');
+			return res.json([
+				{ id: 1, nombre: 'Ficción', descripcion: 'Obras de ficción' },
+				{ id: 2, nombre: 'No Ficción', descripcion: 'Obras basadas en hechos reales' },
+				{ id: 3, nombre: 'Ciencia', descripcion: 'Libros científicos' },
+				{ id: 4, nombre: 'Historia', descripcion: 'Libros históricos' },
+				{ id: 5, nombre: 'Arte', descripcion: 'Libros de arte y cultura' }
+			]);
+		}
+		
+		res.status(500).json({ 
+			error: 'Error fetching categories',
+			details: error.message
+		});
 	}
 }
 
@@ -98,28 +103,12 @@ export async function getUserLibrary(req, res) {
 				x.fecha_ultima_lectura,
 				COALESCE(
 					json_agg(
-						DISTINCT jsonb_build_object('id', a.id_autor, 'nombre', a.nombre)
-					) FILTER (WHERE a.id_autor IS NOT NULL),
-					'[]'
-				) as autores,
-				COALESCE(
-					json_agg(
-						DISTINCT jsonb_build_object('id', g.id_genero, 'nombre', g.nombre)
-					) FILTER (WHERE g.id_genero IS NOT NULL),
-					'[]'
-				) as generos,
-				COALESCE(
-					json_agg(
 						DISTINCT jsonb_build_object('id', c.id_categoria, 'nombre', c.nombre)
 					) FILTER (WHERE c.id_categoria IS NOT NULL),
 					'[]'
 				) as categorias
 			FROM tbl_libros_x_usuarios x
 			INNER JOIN tbl_libros l ON x.id_libro = l.id_libro
-			LEFT JOIN tbl_libros_x_autores la ON l.id_libro = la.id_libro
-			LEFT JOIN tbl_autores a ON la.id_autor = a.id_autor
-			LEFT JOIN tbl_libros_x_generos lg ON l.id_libro = lg.id_libro
-			LEFT JOIN tbl_generos g ON lg.id_genero = g.id_genero
 			LEFT JOIN tbl_libros_x_categorias lc ON l.id_libro = lc.id_libro
 			LEFT JOIN tbl_categorias c ON lc.id_categoria = c.id_categoria
 			WHERE x.id_usuario = ${userId}::bigint AND COALESCE(l.eliminado, false) = false
@@ -132,14 +121,10 @@ export async function getUserLibrary(req, res) {
 	} catch (error) {
 		console.error('❌ Error fetching user library:', error);
 		console.error('Error details:', error.message);
-		
-		// Si la tabla no existe, devolver array vacío en lugar de error
-		if (error.message && error.message.includes('does not exist')) {
-			console.log('⚠️ La tabla tbl_libros_x_usuarios no existe. Verifica tu esquema');
-			return res.json([]);
-		}
-		
-		res.status(500).json({ error: 'Error al obtener biblioteca del usuario' });
+		res.status(500).json({ 
+			error: 'Error al obtener biblioteca del usuario',
+			details: error.message
+		});
 	}
 }
 

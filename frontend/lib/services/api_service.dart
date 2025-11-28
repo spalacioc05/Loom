@@ -19,34 +19,71 @@ class ApiService {
 
   // Obtiene base URL - Soporta producción y desarrollo
   static Future<String> resolveBaseUrl() async {
-    // URL de producción en Render (ACTUALIZAR con tu URL real)
-    const production = 'https://loom-backend.onrender.com';
+    // URL de producción en Render
+    const production = 'https://loom-backend-tp5u.onrender.com';
     
-    // URL de desarrollo local
-    const development = 'http://172.23.32.1:3000';
+    // URLs de desarrollo local según plataforma:
+    // - Emulador Android: http://10.0.2.2:3000 (localhost del host)
+    // - Dispositivo físico Android/iOS: http://IP_LOCAL:3000 (tu computadora en la misma red WiFi)
+    // - Windows/Desktop: http://localhost:3000
     
-    // Auto-detectar: si estás en modo release, usar producción
-    // Si no, revisar si es Android y usar la IP local
-    String baseUrl;
+    // CONFIGURACIÓN PARA DISPOSITIVO FÍSICO
+    // Cambia esta IP a la IPv4 de tu computadora (usa 'ipconfig' en Windows o 'ifconfig' en Mac/Linux)
+    const localNetworkIp = '192.168.1.10:3000'; // ← AJUSTA ESTA IP SEGÚN TU RED
     
-    try {
-      // Intentar detectar si estamos en modo release
-      const bool isRelease = bool.fromEnvironment('dart.vm.product');
+    // FORZAR desarrollo local para ver cambios (cambiar a false para producción)
+    const forceLocal = true;
+    
+    if (forceLocal) {
+      // Detectar plataforma
+      String developmentUrl;
       
-      if (isRelease) {
-        baseUrl = production;
-        print('🚀 Modo PRODUCCIÓN - usando: $production');
-      } else {
-        baseUrl = development;
-        print('🏠 Modo DESARROLLO - usando: $development');
+      try {
+        // Para dispositivos Android FÍSICOS, usar la IP de la red local
+        // Para EMULADOR Android, usar 10.0.2.2
+        if (Platform.isAndroid) {
+          // Intentar detectar si es emulador o dispositivo físico
+          // En emulador, usar 10.0.2.2; en físico, usar IP de red local
+          developmentUrl = 'http://$localNetworkIp';
+          print('📱 ANDROID - usando IP de red local: $developmentUrl');
+          print('💡 Si no conecta, verifica que:');
+          print('   1. Tu PC y celular estén en la misma red WiFi');
+          print('   2. La IP $localNetworkIp sea correcta (usa ipconfig)');
+          print('   3. El firewall de Windows permita conexiones en puerto 3000');
+        } 
+        // En iOS simulator, localhost funciona
+        else if (Platform.isIOS) {
+          developmentUrl = 'http://localhost:3000';
+          print('📱 iOS - usando: $developmentUrl');
+        }
+        // En Windows/Linux/macOS desktop, usar localhost
+        else {
+          developmentUrl = 'http://localhost:3000';
+          print('💻 DESKTOP - usando: $developmentUrl');
+        }
+      } catch (e) {
+        // Fallback
+        developmentUrl = 'http://$localNetworkIp';
+        print('⚠️ No se pudo detectar plataforma, usando IP de red: $developmentUrl');
       }
-    } catch (e) {
-      // Fallback a desarrollo si hay error
-      baseUrl = development;
-      print('⚠️ Error detectando modo, usando desarrollo: $development');
+      
+      return developmentUrl;
     }
     
-    return baseUrl;
+    // Modo producción
+    const bool isRelease = bool.fromEnvironment('dart.vm.product');
+    
+    if (isRelease) {
+      print('🚀 Modo PRODUCCIÓN - usando: $production');
+      return production;
+    } else {
+      print('🏠 Modo DESARROLLO - usando backend local');
+      if (Platform.isAndroid) {
+        return 'http://$localNetworkIp';
+      } else {
+        return 'http://localhost:3000';
+      }
+    }
   }
 
 

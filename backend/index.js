@@ -27,7 +27,7 @@ app.get('/ping', (req, res) => {
   res.status(200).json({ status: 'ok' });
 });
 
-app.listen(PORT, '0.0.0.0', async () => {
+const server = app.listen(PORT, '0.0.0.0', async () => {
   // Obtener IP local de la PC
   const networkInterfaces = os.networkInterfaces();
   let localIP = 'localhost';
@@ -55,4 +55,41 @@ app.listen(PORT, '0.0.0.0', async () => {
   } catch (err) {
     console.error('❌ Error conectando PostgreSQL:', err);
   }
+  
+  // Mantener el proceso activo
+  console.log('🔄 Servidor listo para recibir peticiones...');
+});
+
+// Manejar cierre graceful
+process.on('SIGINT', () => {
+  console.log('\n\n🛑 Cerrando servidor...');
+  server.close(async () => {
+    console.log('✅ Servidor HTTP cerrado');
+    await sql.end({ timeout: 5 });
+    console.log('✅ Conexión PostgreSQL cerrada');
+    process.exit(0);
+  });
+});
+
+server.on('error', (error) => {
+  if (error.code === 'EADDRINUSE') {
+    console.error(`❌ Puerto ${PORT} ya está en uso`);
+  } else {
+    console.error('❌ Error del servidor:', error);
+  }
+  process.exit(1);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('❌ Excepción no capturada:', error);
+  console.error('Stack:', error.stack);
+  // NO terminar el proceso para debugging
+  // process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Promesa rechazada no manejada:', reason);
+  console.error('Promise:', promise);
+  // NO terminar el proceso para debugging
+  // process.exit(1);
 });

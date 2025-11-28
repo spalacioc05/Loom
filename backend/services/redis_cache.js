@@ -9,9 +9,17 @@ class RedisCache {
 
   async initialize() {
     try {
-      // Soportar REDIS_URL para Render o configuración local
+      // Verificar si Redis está habilitado
+      const redisHost = process.env.REDIS_HOST;
       const redisUrl = process.env.REDIS_URL;
       
+      if (!redisHost && !redisUrl) {
+        console.log('[Redis Cache] ℹ️  Redis no configurado - Continuando sin cache (modo degradado)');
+        this.isConnected = false;
+        return;
+      }
+      
+      // Soportar REDIS_URL para Render o configuración local
       if (redisUrl) {
         // Producción: usar REDIS_URL de Render
         console.log('[Redis Cache] 🌐 Conectando con REDIS_URL...');
@@ -331,6 +339,28 @@ class RedisCache {
       return true;
     } catch (error) {
       console.error('[Redis Cache] Error al invalidar cache:', error.message);
+      return false;
+    }
+  }
+
+  /**
+   * Invalida la cache de la lista de voces (`voices:all`).
+   */
+  async invalidateVoicesCache() {
+    if (!this.isConnected) return false;
+
+    try {
+      const key = 'voices:all';
+      const exists = await this.client.exists(key);
+      if (exists) {
+        await this.client.del(key);
+        console.log('[Redis Cache] 🗑️ Cache de voces invalidada');
+      } else {
+        console.log('[Redis Cache] ℹ️ No existía cache de voces');
+      }
+      return true;
+    } catch (error) {
+      console.error('[Redis Cache] Error invalidando cache de voces:', error.message);
       return false;
     }
   }

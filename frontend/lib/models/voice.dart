@@ -15,6 +15,17 @@ class Voice {
 
   /// Genera un nombre amigable desde el código de voz
   String get name {
+    // Para voces de Google Cloud TTS (ej: "es-US-Neural2-A" -> "ES-US Neural2-A")
+    if (provider == 'gcp' && voiceCode.contains('-')) {
+      // Formato: idioma-país-tipo-letra (ej: es-US-Neural2-A)
+      final parts = voiceCode.split('-');
+      if (parts.length >= 3) {
+        final country = parts.take(2).join('-'); // es-US
+        final rest = parts.skip(2).join('-'); // Neural2-A, Wavenet-B, Studio-C
+        return '$country $rest';
+      }
+    }
+    
     // Para voces simples de Google TTS (es-Normal, es-Clara)
     if (voiceCode.contains('-')) {
       final parts = voiceCode.split('-');
@@ -45,6 +56,93 @@ class Voice {
       }
     }
     return voiceCode; // Fallback
+  }
+  
+  /// Obtiene el tipo de voz (Neural2, Wavenet, Studio, etc.)
+  String get voiceType {
+    if (voiceCode.contains('Neural2')) return 'Neural2';
+    if (voiceCode.contains('Wavenet')) return 'Wavenet';
+    if (voiceCode.contains('Studio')) return 'Studio';
+    if (voiceCode.contains('Journey')) return 'Journey';
+    if (voiceCode.contains('Chirp')) return 'Chirp';
+    if (voiceCode.contains('Standard')) return 'Standard';
+    return 'Otro';
+  }
+  
+  /// Obtiene el género de la voz basado en settings o inferencia del código
+  String get gender {
+    // Primero intentar desde settings
+    if (settings != null && settings!.containsKey('gender')) {
+      final g = settings!['gender'].toString().toUpperCase();
+      if (g == 'FEMALE') return 'Mujer';
+      if (g == 'MALE') return 'Hombre';
+      return 'Neutral';
+    }
+    
+    // Inferir desde voice code
+    final code = voiceCode.toLowerCase();
+    if (code.contains('female')) return 'Mujer';
+    if (code.contains('male')) return 'Hombre';
+    
+    // Por la letra final en voces Google (A, B, C, D = patrón común)
+    // A, C, E, G, H suelen ser femeninas; B, D, F suelen ser masculinas
+    if (provider == 'gcp') {
+      final lastChar = voiceCode.split('-').last.toUpperCase();
+      if (RegExp(r'[ACEGH]').hasMatch(lastChar)) return 'Mujer';
+      if (RegExp(r'[BDF]').hasMatch(lastChar)) return 'Hombre';
+    }
+    
+    return 'Neutral';
+  }
+  
+  /// Obtiene una descripción detallada de las características de la voz
+  String get description {
+    final type = voiceType;
+    final genderLower = gender.toLowerCase();
+    
+    // Descripciones específicas por tipo de voz
+    switch (type) {
+      case 'Neural2':
+        if (genderLower == 'mujer') {
+          return 'Voz femenina ultra-realista con tonos cálidos y naturales. Ideal para narrativas largas y contenido educativo.';
+        } else if (genderLower == 'hombre') {
+          return 'Voz masculina profunda y clara con excelente dicción. Perfecta para audiolibros y podcasts profesionales.';
+        }
+        return 'Calidad premium con la última tecnología de síntesis neural. Suena completamente humana.';
+      
+      case 'Studio':
+        if (genderLower == 'mujer') {
+          return 'Optimizada para largos períodos de escucha. Voz suave y consistente que reduce la fatiga auditiva.';
+        } else if (genderLower == 'hombre') {
+          return 'Tonos balanceados ideales para sesiones extendidas. Claridad excepcional en cualquier volumen.';
+        }
+        return 'Diseñada especialmente para contenido extenso como novelas y documentales.';
+      
+      case 'Wavenet':
+        if (genderLower == 'mujer') {
+          return 'Voz expresiva con matices emocionales. Excelente para diálogos y narrativa dramática.';
+        } else if (genderLower == 'hombre') {
+          return 'Tonalidad rica y versátil. Transmite autoridad y confianza en cada palabra.';
+        }
+        return 'Tecnología Wavenet de alta fidelidad. Calidad superior con entonación natural.';
+      
+      case 'Journey':
+        return 'Estilo conversacional y cercano. Perfecta para contenido informal y storytelling personal.';
+      
+      case 'Chirp':
+        if (genderLower == 'mujer') {
+          return 'Altamente expresiva con rango emocional amplio. Ideal para contenido infantil y narrativas dinámicas.';
+        } else if (genderLower == 'hombre') {
+          return 'Voz energética y versátil. Excelente para contenido motivacional y educativo interactivo.';
+        }
+        return 'Tecnología avanzada con expresividad emocional mejorada.';
+      
+      case 'Standard':
+        return 'Voz clara y confiable. Buena opción para pruebas y contenido general.';
+      
+      default:
+        return 'Voz de síntesis de texto a voz con calidad profesional.';
+    }
   }
 
   factory Voice.fromJson(Map<String, dynamic> json) => Voice(

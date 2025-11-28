@@ -25,6 +25,9 @@ package-lock.json
 *.secret
 *.credentials
 azure.json
+# Google Cloud service account keys (NO subir)
+google-credentials.json
+config/google-credentials.json
 
 # Supabase
 .supabase/

@@ -24,6 +24,7 @@ import { healthCheck } from '../controllers/health_controller.js';
 import { processPdf } from '../workers/process_pdf.js';
 import pkg from 'pg';
 const { Pool } = pkg;
+import redisCache from '../services/redis_cache.js';
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -153,3 +154,15 @@ router.post('/admin/reprocess-books', async (req, res) => {
 });
 
 export default router;
+
+// ADMIN: invalidar cache de voces (POST /admin/clear-voices-cache)
+router.post('/admin/clear-voices-cache', async (req, res) => {
+  try {
+    const ok = await redisCache.invalidateVoicesCache();
+    if (!ok) return res.status(500).json({ success: false, message: 'Cache no disponible o no pudo invalidarse' });
+    res.json({ success: true, message: 'Cache de voces invalidada' });
+  } catch (err) {
+    console.error('[Admin] Error invalidando cache de voces:', err.message);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});

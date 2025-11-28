@@ -34,6 +34,7 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
   int _currentIndex = 0;
   bool _loadingSegment = false;
   bool _isTransitioning = false; // Flag para prevenir múltiples transiciones simultáneas
+  bool _userRequestedPlay = false; // true cuando el usuario presionó play
   Timer? _autosaveTimer;
   String? _documentoId; // UUID del documento real (no el libro_id)
   bool _addedToLibrary = false; // Para rastrear si ya se agregó a la biblioteca
@@ -49,17 +50,78 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
     print('🔄 [BookPlayer] Iniciando carga...');
     
     try {
-      // Cargar voces mock
+      // Cargar voces reales del backend (incluye Google TTS)
       print('   1. Cargando voces...');
       final voices = await TtsService.instance.getVoices();
-      print('   ✅ ${voices.length} voces cargadas');
-      
-      // Seleccionar "es-Normal" como voz por defecto (español normal)
-      Voice current = voices.firstWhere(
-        (v) => v.voiceCode == 'es-Normal',
-        orElse: () => voices.first, // Fallback a primera voz si no se encuentra
+      print('   ✅ ${voices.length} voces cargadas (backend)');
+
+      // Filtrar SOLO voces GCP y condensar: por estilo (voiceType) seleccionar 4 voces
+      // por estilo: 2 en inglés (1F + 1M) y 2 en español (1F + 1M)
+      final gcp = voices.where((v) => v.provider == 'gcp').toList();
+      final source = gcp.isNotEmpty ? gcp : voices;
+
+      final preferredStyles = ['Neural2', 'Wavenet', 'Studio', 'Journey', 'Chirp', 'Standard'];
+
+      // Agrupar por estilo
+      final Map<String, List<Voice>> byStyle = {};
+      for (final v in source) {
+        final style = v.voiceType;
+        byStyle.putIfAbsent(style, () => []);
+        byStyle[style]!.add(v);
+      }
+
+      final condensed = <Voice>[];
+      final styles = preferredStyles.where((s) => byStyle.containsKey(s)).toList() + byStyle.keys.where((k) => !preferredStyles.contains(k)).toList();
+
+      for (final style in styles) {
+        final list = byStyle[style] ?? [];
+        if (list.isEmpty) continue;
+
+        // Crear sublistas por idioma
+        final enList = list.where((v) => v.lang.startsWith('en')).toList();
+        final esList = list.where((v) => v.lang.startsWith('es')).toList();
+
+        // Helper para elegir 1F + 1M de una lista
+        Voice? pickFemale(List<Voice> lst) {
+          for (final v in lst) {
+            if (v.gender.toUpperCase() == 'FEMALE') return v;
+          }
+          return lst.isNotEmpty ? lst.first : null;
+        }
+
+        Voice? pickMale(List<Voice> lst) {
+          for (final v in lst) {
+            if (v.gender.toUpperCase() == 'MALE') return v;
+          }
+          return lst.isNotEmpty ? lst.first : null;
+        }
+
+        final enF = pickFemale(enList);
+        final enM = pickMale(enList.where((v) => v.id != enF?.id).toList());
+        final esF = pickFemale(esList);
+        final esM = pickMale(esList.where((v) => v.id != esF?.id).toList());
+
+        // Añadir en orden: ES F, ES M, EN F, EN M (o el orden que prefieras)
+        if (esF != null && !condensed.any((c) => c.id == esF.id)) condensed.add(esF);
+        if (esM != null && !condensed.any((c) => c.id == esM.id)) condensed.add(esM);
+        if (enF != null && !condensed.any((c) => c.id == enF.id)) condensed.add(enF);
+        if (enM != null && !condensed.any((c) => c.id == enM.id)) condensed.add(enM);
+      }
+
+      print('   🔎 Voces condensadas: ${condensed.length} (máx 2 por idioma)');
+
+      // Preferir voz por defecto: preferir explicitamente 'es-ES-Wavenet-E' cuando exista
+      Voice current = condensed.firstWhere(
+        (v) => v.provider == 'gcp' && v.voiceCode.contains('es-ES-Wavenet-E'),
+        orElse: () => condensed.firstWhere(
+          (v) => v.provider == 'gcp' && v.lang.startsWith('es') && v.voiceCode.contains('Wavenet'),
+          orElse: () => condensed.firstWhere(
+            (v) => v.provider == 'gcp' && v.lang.startsWith('es'),
+            orElse: () => condensed.isNotEmpty ? condensed.first : voices.first,
+          ),
+        ),
       );
-      print('   Voz seleccionada: ${current.voiceCode}');
+      print('   Voz seleccionada por defecto: ${current.voiceCode} (${current.provider})');
       
       // Cargar progreso previo si existe
       print('   2. Cargando progreso previo...');
@@ -67,11 +129,13 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
       print('   ${progress != null ? "✅ Progreso encontrado" : "ℹ️ Sin progreso previo"}');
       
       setState(() {
-        _voices = voices;
+        _voices = condensed.isNotEmpty ? condensed : voices;
         _currentVoice = current;
         _progress = progress;
         _loadingVoices = false;
       });
+      // Intentar arrancar reproducción desde DB inmediatamente si ya hay audios generados
+      _tryStartFromDb();
       print('   ✅ Estado actualizado');
     } catch (e) {
       print('   ❌ Error en _init: $e');
@@ -143,56 +207,102 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
 
   void _togglePlay() async {
     if (_player.playing) {
+      // Usuario pausó manualmente
+      _userRequestedPlay = false;
       await _player.pause();
     } else {
+      // Usuario solicitó reproducir
+      _userRequestedPlay = true;
+      // Asegurar que exista una voz seleccionada; si no, intentar cargar y elegir una por defecto
+      if (_currentVoice == null) {
+        try {
+          final voices = await TtsService.instance.getVoices();
+          if (voices.isNotEmpty) {
+            final defaultVoice = voices.firstWhere(
+              (v) => v.provider == 'gcp' && v.voiceCode.contains('es-ES-Wavenet-E'),
+              orElse: () => voices.firstWhere(
+                (v) => v.provider == 'gcp' && v.lang.startsWith('es') && v.voiceCode.contains('Wavenet'),
+                orElse: () => voices.firstWhere(
+                  (v) => v.provider == 'gcp' && v.lang.startsWith('es'),
+                  orElse: () => voices.first,
+                ),
+              ),
+            );
+            setState(() => _currentVoice = defaultVoice);
+            print('🔔 Voz por defecto aplicada antes de reproducir: ${defaultVoice.voiceCode}');
+          }
+        } catch (e) {
+          print('⚠️ No se pudo cargar voz por defecto: $e');
+        }
+      }
+
       // Si aún no tenemos playlist, usar quick-start para obtener el primer audio inmediatamente
       if (_playlist.isEmpty) {
         setState(() => _loadingSegment = true);
-        try {
+          try {
           // Agregar a biblioteca ANTES de empezar a reproducir
           await _addToLibraryIfNeeded();
           
           print('🎧 Iniciando quick-start para libro ${widget.book.intId}...');
           // Quick-start: genera y espera el primer audio
-          final quickStartResult = await TtsService.instance.quickStartBook(
+          // Llamamos al quick-start pero lo manejamos de forma silenciosa: si el backend
+          // responde 202 (segmentación en curso) no enseñamos errores feos sino que
+          // iniciamos polling en background para esperar el primer audio.
+          final quickStartResp = await TtsService.instance.quickStartBook(
             widget.book.intId,
             _currentVoice!.id,
             nextCount: 10,
           ).timeout(
             const Duration(seconds: 30),
-            onTimeout: () {
-              throw Exception('Timeout: El audio está tardando mucho en generarse');
-            },
+            onTimeout: () => {'status': -1, 'body': 'timeout'},
           );
-          
-          final firstAudioUrl = quickStartResult['first_audio_url'] as String;
-          final documentoId = quickStartResult['documento_id'] as String?;
-          
-          print('✅ Primer audio listo: $firstAudioUrl');
-          print('📄 Documento ID: $documentoId');
-          
-          // Guardar documento_id para saveProgress
-          if (documentoId != null) {
-            setState(() {
-              _documentoId = documentoId;
-            });
+
+          final status = quickStartResp['status'] as int? ?? -1;
+          final body = quickStartResp['body'];
+
+          if (status == 200) {
+            // Respuesta OK: backend entregó el primer audio
+            final map = body as Map<String, dynamic>;
+            final firstAudioUrl = map['first_audio_url'] as String;
+            final documentoId = map['documento_id'] as String?;
+
+            // Guardar documento_id para saveProgress
+            if (documentoId != null) {
+              setState(() {
+                _documentoId = documentoId;
+              });
+            }
+
+            // Crear playlist con el primer audio
+            _playlist = [
+              PlaylistItem(
+                segmentId: 0,
+                url: Uri.parse(firstAudioUrl),
+                durationMs: null,
+              ),
+            ];
+            _currentIndex = 0;
+
+            // Reproducir inmediatamente
+            await _loadAndPlay(0);
+
+            // Cargar el resto de la playlist en background
+            _ensurePlaylistLoaded();
+          } else if (status == 202) {
+            // Segmentación en curso: no mostrar error al usuario, iniciar polling silencioso
+            print('ℹ️ Quick-start: segmentación iniciada en backend (202). Iniciando polling silencioso.');
+            setState(() => _loadingSegment = true);
+            // Llamar al polling que ya existe para esperar el primer audio y reproducirlo
+            _waitForFirstAudioAndPlay();
+          } else {
+            // Errores o timeouts: mostrar mensaje genérico y permitir reintento manual
+            print('⚠️ quick-start devolvió status=$status, body=$body');
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('No se pudo iniciar la reproducción. Intenta de nuevo.')),
+              );
+            }
           }
-          
-          // Crear playlist con el primer audio
-          _playlist = [
-            PlaylistItem(
-              segmentId: 0,
-              url: Uri.parse(firstAudioUrl),
-              durationMs: null,
-            ),
-          ];
-          _currentIndex = 0;
-          
-          // Reproducir inmediatamente
-          await _loadAndPlay(0);
-          
-          // Cargar el resto de la playlist en background
-          _ensurePlaylistLoaded();
           
         } catch (e) {
           print('Error en quick-start: $e');
@@ -284,16 +394,15 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
 
   void _changeVoice(Voice voice) async {
     if (_currentVoice?.id == voice.id) return; // Ya está usando esta voz
-    
     setState(() => _currentVoice = voice);
-    
+
     // Detener reproducción actual
     await _player.stop();
-    
-    // Limpiar playlist
+
+    // Limpiar playlist localmente para iniciar con la nueva voz
     _playlist = [];
     _currentIndex = 0;
-    
+
     // Mostrar mensaje al usuario
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -303,59 +412,65 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
         ),
       );
     }
-    
-    // Usar quick-start para cargar el primer audio con la nueva voz
+
+    // Intentar obtener una playlist desde el backend pidiendo que prefiera audios existentes
+    // y que genere sincrónicamente el primer segmento faltante para no reiniciar la reproducción.
     setState(() => _loadingSegment = true);
     try {
-      final quickStartResult = await TtsService.instance.quickStartBook(
-        widget.book.intId,
-        voice.id,
+      final docId = _documentoId ?? widget.book.id.toString();
+
+      final playlist = await TtsService.instance.getPlaylist(
+        documentId: docId,
+        voiceId: voice.id,
+        startSegmentId: null,
+        preferExisting: true,
+        generateFirstIfMissing: true,
       );
-      
-      final firstAudioUrl = quickStartResult['first_audio_url'] as String;
-      final documentoId = quickStartResult['documento_id'] as String?;
-      
-      // Guardar documento_id
-      if (documentoId != null) {
+
+      // Guardar documento_id si viene
+      if (playlist.documentId.isNotEmpty) {
         setState(() {
-          _documentoId = documentoId;
+          _documentoId = playlist.documentId;
         });
       }
 
-      // Ajustar velocidad automáticamente según tipo de voz (Female más lenta, Male normal)
-      if (voice.voiceCode.contains('Female')) {
-        _speed = 0.90; // ligeramente más lenta
-      } else if (voice.voiceCode.contains('Male')) {
-        _speed = 1.05; // ligeramente más rápida
+      // Ajustar velocidad automáticamente según tipo de voz (heurística simple)
+      if (voice.voiceCode.toLowerCase().contains('female') || voice.gender.toUpperCase() == 'FEMALE') {
+        _speed = 0.90;
+      } else if (voice.voiceCode.toLowerCase().contains('male') || voice.gender.toUpperCase() == 'MALE') {
+        _speed = 1.05;
       } else {
-        _speed = 1.0; // neutra
+        _speed = 1.0;
       }
       await _player.setSpeed(_speed);
-      
-      // Crear playlist con el primer audio
-      // Usamos segmentId = 1 (primer segmento real) para reflejar orden > 0
-      _playlist = [
-        PlaylistItem(
-          segmentId: 1,
-          url: Uri.parse(firstAudioUrl),
-          durationMs: null,
-        ),
-      ];
-      _currentIndex = 0;
-      
-      // Reproducir automáticamente con la nueva voz
-      await _loadAndPlay(0);
-      
+
+      // Usar los items devueltos por el backend
+      setState(() {
+        _playlist = playlist.items;
+      });
+
+      // Determinar índice inicial
+      final startSeg = playlist.startSegmentId;
+      final idx = _playlist.indexWhere((it) => it.segmentId == startSeg);
+      _currentIndex = idx >= 0 ? idx : 0;
+
+      // Reproducir inmediatamente el segmento inicial
+      await _loadAndPlay(_currentIndex);
+
       // Cargar el resto de la playlist en background
       _ensurePlaylistLoaded();
-      
     } catch (e) {
-      print('Error cambiando voz: $e');
+      print('Error cambiando voz (getPlaylist): $e');
+      // Evitar mostrar errores técnicos al usuario. Mostrar mensaje amigable y reintentar en background.
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error cambiando voz: $e')),
+          const SnackBar(content: Text('No se pudo cambiar la voz ahora. Reintentando en segundo plano.')),
         );
       }
+      // Iniciar intento silencioso de refrescar la playlist en background
+      Future.delayed(const Duration(seconds: 2), () {
+        if (mounted) _ensurePlaylistLoaded();
+      });
     } finally {
       setState(() => _loadingSegment = false);
     }
@@ -420,19 +535,90 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
       // Construir fuente gapless inicial con los audios ya disponibles
       _setupGaplessInitial();
 
+      // Pedir generación agresiva en background para evitar que la reproducción se quede sin audios
+      if (_currentVoice != null) {
+        // Solicitar generación de un buffer grande (50) en background. No bloquea.
+        Future.microtask(() async {
+          try {
+            await TtsService.instance.generateMore(widget.book.intId, _currentVoice!.id, count: 50);
+          } catch (e) {
+            print('⚠️ Error solicitando generación agresiva: $e');
+          }
+        });
+      }
+
       // Siempre programar polling para actualizar cuando se generen más
       // (se detendrá automáticamente cuando tenga todos)
       _schedulePlaylistRefresh();
     } catch (e) {
       print('Error cargando playlist: $e');
-      // Mostrar mensaje al usuario
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error cargando audios: $e')),
-        );
-      }
+      // Errores automáticos no deben mostrarse crudos al usuario. Mantener silent fail and retry.
+      print('⚠️ Error cargando playlist (silencioso): $e');
     } finally {
       setState(() => _loadingSegment = false);
+    }
+  }
+
+  /// Intenta cargar audios desde la BD al abrir el libro y reproducir el primer audio
+  /// disponible inmediatamente (sin pasar por quick-start) si existe.
+  Future<void> _tryStartFromDb() async {
+    try {
+      if (_currentVoice == null) return;
+
+      // Pedir al backend todos los audios SIN generar nuevos (autoGenerate = 0)
+      final result = await TtsService.instance.getBookAudios(
+        widget.book.intId,
+        autoGenerate: 0,
+        voiceId: _currentVoice!.id,
+      );
+
+      final urls = result['urls'] as List<String>;
+      final documentoId = result['documento_id'] as String?;
+
+      // Guardar documento_id si viene
+      if (documentoId != null && documentoId.isNotEmpty) {
+        _documentoId = documentoId;
+      }
+
+      // Buscar primer audio ya generado
+      int firstIndex = -1;
+      for (int i = 0; i < urls.length; i++) {
+        if (urls[i].isNotEmpty) {
+          firstIndex = i;
+          break;
+        }
+      }
+
+      if (firstIndex >= 0) {
+        // Construir playlist con todas las URLs (vacías donde no hay audio)
+        final items = urls.asMap().entries.map((entry) {
+          return PlaylistItem(
+            segmentId: entry.key,
+            url: entry.value.isEmpty ? Uri.parse('') : Uri.parse(entry.value),
+            durationMs: null,
+          );
+        }).toList();
+
+        setState(() {
+          _playlist = items;
+          _currentIndex = firstIndex;
+          _loadingSegment = false;
+        });
+
+        // No reproducir automáticamente al entrar al libro.
+        // Si el usuario ya presionó Play antes de que esto se complete, reproducir ahora.
+        if (_userRequestedPlay) {
+          await _loadAndPlay(firstIndex);
+        }
+
+        // Continuar cargando/generando en background si hace falta
+        _ensurePlaylistLoaded();
+      } else {
+        // No hay audios en DB: no forzamos quick-start aquí (la UI podrá usar quick-start al tocar play)
+        print('ℹ️ No hay audios en BD para libro ${widget.book.intId} (voz ${_currentVoice!.voiceCode})');
+      }
+    } catch (e) {
+      print('⚠️ Error intentando reproducir desde BD: $e');
     }
   }
 
@@ -526,9 +712,13 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
         // Buscar primer audio disponible
         for (int i = 0; i < _playlist.length; i++) {
           if (_playlist[i].url.toString().isNotEmpty) {
-            print('✅ Primer audio listo en índice $i, reproduciendo...');
+            print('✅ Primer audio listo en índice $i');
             setState(() => _loadingSegment = false);
-            await _loadAndPlay(i);
+            // Solo reproducir automáticamente si el usuario había solicitado play
+            if (_userRequestedPlay) {
+              print('ℹ️ Usuario solicitó reproducción: iniciando automáticamente');
+              await _loadAndPlay(i);
+            }
             return;
           }
         }
@@ -546,11 +736,8 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
     
     // Timeout: no se generó ningún audio
     setState(() => _loadingSegment = false);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No se pudo generar el audio. Intenta de nuevo.')),
-      );
-    }
+    // No mostrar alertas técnicas al usuario; dejamos el botón de reproducir disponible
+    print('⚠️ Timeout esperando primer audio - no se generó a tiempo');
   }
 
   void _setupGaplessInitial() {
@@ -568,7 +755,10 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
     if (sources.isEmpty) return;
     _gaplessSource = ConcatenatingAudioSource(children: sources);
     _player.setAudioSource(_gaplessSource!, initialIndex: 0).then((_) async {
-      await _player.play();
+      // Solo iniciar reproducción automática si el usuario ya solicitó play
+      if (_userRequestedPlay) {
+        await _player.play();
+      }
     }).onError((e, st) {
       print('Gapless init error: $e');
     });  
@@ -731,8 +921,21 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
         final nextIndex = _currentIndex + 1;
         if (_gaplessAdded.contains(nextIndex)) {
           print('⚡ Gapless seek a índice $nextIndex');
+          // Pausar antes de seek para evitar que el reproductor repita el segmento actual
+          try {
+            if (_player.playing) await _player.pause();
+          } catch (_) {}
+
           await _player.seek(Duration.zero, index: nextIndex);
           setState(() => _currentIndex = nextIndex);
+
+          // Reanudar reproducción solo si el usuario había solicitado play
+          if (_userRequestedPlay) {
+            try {
+              await _player.play();
+            } catch (_) {}
+          }
+
           _saveProgress();
           // Verificar prefetch y generación adicional
           _checkAndGenerateAhead(nextIndex);
@@ -909,15 +1112,69 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
 
   void _showVoiceSelector() {
     if (_voices.isEmpty) return;
+
+    // Forzar: usar SOLO voces de Google (gcp). Si por alguna razón no hay, caer a todas.
+    final googleVoices = _voices.where((v) => v.provider == 'gcp').toList();
+    final source = googleVoices.isNotEmpty ? googleVoices : _voices;
+
+    // Condensar por estilo: por cada estilo mostrar hasta 4 voces (ES F, ES M, EN F, EN M)
+    final preferredStyles = ['Neural2', 'Wavenet', 'Studio', 'Journey', 'Chirp', 'Standard'];
+    final Map<String, List<Voice>> byStyle = {};
+    for (final v in source) {
+      final style = v.voiceType;
+      byStyle.putIfAbsent(style, () => []);
+      byStyle[style]!.add(v);
+    }
+
+    final voicesToShow = <Voice>[];
+    final styles = preferredStyles.where((s) => byStyle.containsKey(s)).toList() + byStyle.keys.where((k) => !preferredStyles.contains(k)).toList();
+    for (final style in styles) {
+      final list = byStyle[style] ?? [];
+      if (list.isEmpty) continue;
+
+      final enList = list.where((v) => v.lang.startsWith('en')).toList();
+      final esList = list.where((v) => v.lang.startsWith('es')).toList();
+
+      Voice? pickFemale(List<Voice> lst) {
+        for (final v in lst) if (v.gender.toUpperCase() == 'FEMALE') return v;
+        return lst.isNotEmpty ? lst.first : null;
+      }
+      Voice? pickMale(List<Voice> lst) {
+        for (final v in lst) if (v.gender.toUpperCase() == 'MALE') return v;
+        return lst.isNotEmpty ? lst.first : null;
+      }
+
+      final esF = pickFemale(esList);
+      final esM = pickMale(esList.where((v) => v.id != esF?.id).toList());
+      final enF = pickFemale(enList);
+      final enM = pickMale(enList.where((v) => v.id != enF?.id).toList());
+
+      if (esF != null && !voicesToShow.any((c) => c.id == esF.id)) voicesToShow.add(esF);
+      if (esM != null && !voicesToShow.any((c) => c.id == esM.id)) voicesToShow.add(esM);
+      if (enF != null && !voicesToShow.any((c) => c.id == enF.id)) voicesToShow.add(enF);
+      if (enM != null && !voicesToShow.any((c) => c.id == enM.id)) voicesToShow.add(enM);
+    }
+    
+    // Agrupar por tipo para la UI (Neural2, Wavenet, Studio, etc.)
+    final Map<String, List<Voice>> groupedVoices = {};
+    for (final voice in voicesToShow) {
+      final type = voice.voiceType;
+      groupedVoices.putIfAbsent(type, () => []);
+      groupedVoices[type]!.add(voice);
+    }
+
+    // Ordenar grupos por calidad (Neural2 > Studio > Wavenet > Chirp > Standard > Otro)
+    final orderedTypes = ['Neural2', 'Studio', 'Wavenet', 'Journey', 'Chirp', 'Standard', 'Otro'];
+    final sortedTypes = orderedTypes.where((t) => groupedVoices.containsKey(t)).toList();
     
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.5,
-        minChildSize: 0.3,
-        maxChildSize: 0.8,
+        initialChildSize: 0.7,
+        minChildSize: 0.4,
+        maxChildSize: 0.9,
         expand: false,
         builder: (context, scrollController) => Container(
           decoration: const BoxDecoration(
@@ -928,84 +1185,189 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Seleccionar Voz',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '${_voices.length} voces disponibles',
-                style: const TextStyle(color: Color(0xFFB0B0B0), fontSize: 14),
+              Row(
+                children: [
+                  const Icon(Icons.record_voice_over, color: Color(0xFF00D9FF), size: 28),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Seleccionar Voz',
+                          style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                        ),
+                        Text(
+                              '${voicesToShow.length} voces Google disponibles',
+                              style: const TextStyle(color: Color(0xFFB0B0B0), fontSize: 13),
+                            ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 16),
               Divider(color: Colors.grey[800]),
+              const SizedBox(height: 8),
               Expanded(
                 child: ListView.builder(
                   controller: scrollController,
-                  itemCount: _voices.length,
-                  itemBuilder: (context, index) {
-                    final voice = _voices[index];
-                    final isSelected = _currentVoice?.id == voice.id;
+                  itemCount: sortedTypes.length,
+                  itemBuilder: (context, groupIndex) {
+                    final type = sortedTypes[groupIndex];
+                    final voices = groupedVoices[type]!;
                     
-                    // Determinar emoji e idioma
-                    String emoji;
-                    String langName;
-                    if (voice.lang.startsWith('es')) {
-                      emoji = '🇪🇸';
-                      langName = 'Español';
-                    } else if (voice.lang.startsWith('en')) {
-                      emoji = '🇺🇸';
-                      langName = 'English';
-                    } else {
-                      emoji = '🌐';
-                      langName = voice.lang.toUpperCase();
+                    // Descripción del tipo de voz
+                    String typeDescription;
+                    Color typeColor;
+                    switch (type) {
+                      case 'Neural2':
+                        typeDescription = 'Última generación - Muy natural';
+                        typeColor = const Color(0xFF00D9FF);
+                        break;
+                      case 'Studio':
+                        typeDescription = 'Optimizada para contenido largo';
+                        typeColor = const Color(0xFF00FF88);
+                        break;
+                      case 'Wavenet':
+                        typeDescription = 'Alta calidad';
+                        typeColor = const Color(0xFFFFAA00);
+                        break;
+                      case 'Journey':
+                        typeDescription = 'Conversacional';
+                        typeColor = const Color(0xFFFF6B9D);
+                        break;
+                      case 'Chirp':
+                        typeDescription = 'Emocional y expresiva';
+                        typeColor = const Color(0xFFAA88FF);
+                        break;
+                      default:
+                        typeDescription = 'Calidad estándar';
+                        typeColor = Colors.grey;
                     }
                     
-                    // Obtener el nombre amigable de la voz
-                    final voiceName = voice.name;
-                    
-                    return Card(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      color: isSelected ? const Color(0xFF00D9FF).withOpacity(0.1) : const Color(0xFF2A2A2A),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        side: isSelected 
-                            ? const BorderSide(color: Color(0xFF00D9FF), width: 2)
-                            : BorderSide.none,
-                      ),
-                      child: ListTile(
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        leading: CircleAvatar(
-                          backgroundColor: isSelected 
-                              ? const Color(0xFF00D9FF) 
-                              : Colors.grey[700],
-                          child: Text(
-                            emoji,
-                            style: const TextStyle(fontSize: 20),
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Header del grupo
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 4,
+                                height: 20,
+                                decoration: BoxDecoration(
+                                  color: typeColor,
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                type,
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: typeColor,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  typeDescription,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey[500],
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        title: Text(
-                          voiceName,
-                          style: TextStyle(
-                            fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-                            fontSize: 16,
-                          ),
-                        ),
-                        subtitle: Text(
-                          langName,
-                          style: TextStyle(
-                            color: Colors.grey[400],
-                            fontSize: 13,
-                          ),
-                        ),
-                        trailing: isSelected
-                            ? const Icon(Icons.check_circle, color: Color(0xFF00D9FF), size: 28)
-                            : null,
-                        onTap: () {
-                          _changeVoice(voice);
-                          Navigator.pop(context);
-                        },
-                      ),
+                        // Voces del grupo
+                        ...voices.map((voice) {
+                          final isSelected = _currentVoice?.id == voice.id;
+                          
+                          // Determinar emoji por idioma
+                          String emoji;
+                          if (voice.lang.startsWith('es')) {
+                            emoji = '🇪🇸';
+                          } else if (voice.lang.startsWith('en')) {
+                            emoji = '🇺🇸';
+                          } else {
+                            emoji = '🌐';
+                          }
+                          
+                          final voiceName = voice.name;
+                          final gender = voice.gender;
+                          final description = voice.description;
+                          
+                          return Card(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            color: isSelected 
+                                ? typeColor.withOpacity(0.15) 
+                                : const Color(0xFF2A2A2A),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              side: isSelected 
+                                  ? BorderSide(color: typeColor, width: 2)
+                                  : BorderSide.none,
+                            ),
+                            child: ListTile(
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              leading: CircleAvatar(
+                                radius: 20,
+                                backgroundColor: isSelected 
+                                    ? typeColor 
+                                    : Colors.grey[700],
+                                child: Text(
+                                  emoji,
+                                  style: const TextStyle(fontSize: 18),
+                                ),
+                              ),
+                              title: Text(
+                                voiceName,
+                                style: TextStyle(
+                                  fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                                  fontSize: 15,
+                                ),
+                              ),
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    gender,
+                                    style: TextStyle(
+                                      color: Colors.grey[400],
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    description,
+                                    style: TextStyle(
+                                      color: Colors.grey[500],
+                                      fontSize: 11,
+                                      fontStyle: FontStyle.italic,
+                                    ),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ),
+                              trailing: isSelected
+                                  ? Icon(Icons.check_circle, color: typeColor, size: 24)
+                                  : Icon(Icons.play_circle_outline, color: Colors.grey[600], size: 24),
+                              onTap: () {
+                                _changeVoice(voice);
+                                Navigator.pop(context);
+                              },
+                            ),
+                          );
+                        }),
+                        const SizedBox(height: 12),
+                      ],
                     );
                   },
                 ),
@@ -1249,7 +1611,12 @@ class _BookPlayerScreenState extends State<BookPlayerScreen> {
                             color: coverUrl == null ? Colors.grey[800] : null,
                           ),
                           child: coverUrl == null
-                              ? const Center(child: Icon(Icons.book, size: 72))
+                              ? Center(
+                                  child: Image.asset(
+                                    'assets/loom_splash.png',
+                                    fit: BoxFit.cover,
+                                  ),
+                                )
                               : null,
                         ),
                       ),
